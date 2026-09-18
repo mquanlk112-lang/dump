@@ -1,0 +1,9 @@
+Package: com.you.ipadumper
+Name: IPA Dumper
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: dump the running app to a decrypted .ipa with one tap
+Maintainer: you
+Author: you
+Section: Tweaks
+Depends: mobilesubstrate
