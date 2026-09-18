@@ -182,7 +182,7 @@ static BOOL zip_dir(NSString *srcDir, NSString *outZip) {
 
         const char *name = rel.UTF8String;
         uint16_t nlen = (uint16_t)strlen(name);
-        uint32_t crc = crc_buf(data.bytes, data.length);
+        uint32_t crc = crc_buf((const uint8_t *)data.bytes, data.length);
         uint32_t sz = (uint32_t)data.length;
         uint32_t lofs = (uint32_t)ftell(out);
 
