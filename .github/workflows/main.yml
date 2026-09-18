@@ -1,0 +1,48 @@
+name: Build IPADumper
+
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+
+      - name: Install Theos
+        run: |
+          export THEOS=$HOME/theos
+          git clone --recursive https://github.com/theos/theos.git $THEOS
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          echo "$THEOS/bin" >> $GITHUB_PATH
+
+      - name: Install iOS SDKs
+        run: |
+          mkdir -p $THEOS/sdks && cd $THEOS/sdks
+          git clone --depth 1 https://github.com/theos/sdks.git tmp
+          mv tmp/*.sdk ./ 2>/dev/null || true
+          rm -rf tmp
+
+      - name: Build
+        run: |
+          export THEOS=$HOME/theos
+          export PATH="$THEOS/bin:$PATH"
+          make clean || true
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless \
+            ADDITIONAL_CFLAGS="-Wno-everything" \
+            ADDITIONAL_OBJCXXFLAGS="-Wno-everything -fobjc-arc" \
+            || make package FINALPACKAGE=1
+
+      - name: Collect dylib
+        if: always()
+        run: |
+          mkdir -p output
+          find . -name "*.dylib" -not -path "*/subprojects/*" -exec cp -v {} output/ \;
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: IPADumper
+          path: output/**
