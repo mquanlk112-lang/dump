@@ -140,9 +140,26 @@ jobs:
           test -s "$GITHUB_WORKSPACE/NOVAKIT-iOS16-unsigned.ipa"
 
       - name: Upload IPA artifact
+        id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: NOVAKIT-iOS16-unsigned-IPA
+          name: NOVAKIT-iOS16-unsigned-IPA-run-${{ github.run_number }}
           path: NOVAKIT-iOS16-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish artifact link
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "## NOVAKIT IPA artifact"
+            echo
+            echo "- Artifact name: NOVAKIT-iOS16-unsigned-IPA-run-${{ github.run_number }}"
+            echo "- Artifact ID: ${{ steps.upload.outputs.artifact-id }}"
+            echo "- Artifact URL: ${{ steps.upload.outputs.artifact-url }}"
+            echo "- SHA-256: ${{ steps.upload.outputs.artifact-digest }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          test -n "${{ steps.upload.outputs.artifact-id }}"
+          test -n "${{ steps.upload.outputs.artifact-url }}"
