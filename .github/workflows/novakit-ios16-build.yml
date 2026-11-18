@@ -163,3 +163,5 @@ jobs:
 
           test -n "${{ steps.upload.outputs.artifact-id }}"
           test -n "${{ steps.upload.outputs.artifact-url }}"
+
+# Rebuild trigger: verify the current committed NOVAKIT source on the iOS 16 deployment target.
