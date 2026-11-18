@@ -1,4 +1,3 @@
-
 name: Build NOVAKIT iOS 16 Unsigned IPA
 
 on:
@@ -7,6 +6,9 @@ on:
     branches:
       - main
       - master
+    paths:
+      - 'NOVAKIT-iOS16-fixed.zip'
+      - '.github/workflows/novakit-ios16-build.yml'
 
 permissions:
   contents: read
@@ -21,63 +23,87 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Locate Xcode project
+      - name: Extract and locate Xcode project
         id: project
         shell: bash
         run: |
           set -euo pipefail
 
-          PROJECT=$(find . -maxdepth 5 \
-            -type d -name "NOVAKIT.xcodeproj" \
-            -print -quit)
+          SOURCE_ROOT="$GITHUB_WORKSPACE"
+          PROJECT=""
+
+          # First support a project already extracted in the repository.
+          PROJECT="$(find "$SOURCE_ROOT" -maxdepth 6 -type d -name 'NOVAKIT.xcodeproj' -print -quit || true)"
+
+          # The current repository stores the complete source as this ZIP.
+          if [ -z "$PROJECT" ]; then
+            ARCHIVE="$SOURCE_ROOT/NOVAKIT-iOS16-fixed.zip"
+
+            if [ ! -f "$ARCHIVE" ]; then
+              echo "::error::NOVAKIT-iOS16-fixed.zip is missing from the repository root."
+              echo "Repository files:"
+              find "$SOURCE_ROOT" -maxdepth 3 -type f -print | sort
+              exit 1
+            fi
+
+            EXTRACT_ROOT="$RUNNER_TEMP/NOVAKIT-source"
+            rm -rf "$EXTRACT_ROOT"
+            mkdir -p "$EXTRACT_ROOT"
+
+            echo "Extracting source archive: $ARCHIVE"
+            unzip -q "$ARCHIVE" -d "$EXTRACT_ROOT"
+
+            PROJECT="$(find "$EXTRACT_ROOT" -maxdepth 8 -type d -name 'NOVAKIT.xcodeproj' -print -quit || true)"
+          fi
 
           if [ -z "$PROJECT" ]; then
-            echo "::error::NOVAKIT.xcodeproj not found"
-            find . -maxdepth 4 -type d -name "*.xcodeproj"
+            echo "::error::NOVAKIT.xcodeproj was not found after source extraction."
+            echo "Xcode projects found:"
+            find "$SOURCE_ROOT" "$RUNNER_TEMP/NOVAKIT-source" -maxdepth 8 -type d -name '*.xcodeproj' -print 2>/dev/null || true
             exit 1
           fi
 
-          PROJECT="${PROJECT#./}"
-          PROJECT_DIR=$(dirname "$PROJECT")
+          SCHEME_FILE="$PROJECT/xcshareddata/xcschemes/NOVAKIT.xcscheme"
+          if [ ! -f "$SCHEME_FILE" ]; then
+            echo "::error::Shared scheme NOVAKIT.xcscheme was not found at $SCHEME_FILE"
+            find "$PROJECT" -maxdepth 5 -type f -name '*.xcscheme' -print || true
+            exit 1
+          fi
 
           echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
-          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-
+          echo "scheme=NOVAKIT" >> "$GITHUB_OUTPUT"
           echo "Found project: $PROJECT"
+          echo "Found shared scheme: NOVAKIT"
 
       - name: Show Xcode configuration
+        shell: bash
         run: |
+          set -euo pipefail
           xcodebuild -version
-          xcodebuild -list \
-            -project "${{ steps.project.outputs.project }}"
-
-      - name: Clean build
-        run: |
-          xcodebuild clean \
-            -project "${{ steps.project.outputs.project }}" \
-            -scheme NOVAKIT \
-            -configuration Release \
-            IPHONEOS_DEPLOYMENT_TARGET=16.0
+          xcodebuild -list -project "${{ steps.project.outputs.project }}"
 
       - name: Build unsigned iOS app
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
+
+          DERIVED_DATA="$RUNNER_TEMP/NOVAKIT-Build"
 
           xcodebuild \
             -project "${{ steps.project.outputs.project }}" \
-            -scheme NOVAKIT \
+            -scheme "${{ steps.project.outputs.scheme }}" \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath "$RUNNER_TEMP/NOVAKIT-Build" \
+            -derivedDataPath "$DERIVED_DATA" \
             IPHONEOS_DEPLOYMENT_TARGET=16.0 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build 2>&1 | tee "$RUNNER_TEMP/build.log"
+            clean build
 
-      - name: Verify application
+      - name: Verify built application
+        id: verify
         shell: bash
         run: |
           set -euo pipefail
@@ -85,12 +111,14 @@ jobs:
           APP="$RUNNER_TEMP/NOVAKIT-Build/Build/Products/Release-iphoneos/NOVAKIT.app"
 
           if [ ! -d "$APP" ]; then
-            echo "::error::NOVAKIT.app not found"
+            echo "::error::Expected app bundle was not produced: $APP"
+            find "$RUNNER_TEMP/NOVAKIT-Build/Build/Products" -maxdepth 4 -name '*.app' -print || true
             exit 1
           fi
 
           plutil -lint "$APP/Info.plist"
-          echo "Application verified."
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
+          echo "Verified app bundle: $APP"
 
       - name: Package unsigned IPA
         shell: bash
@@ -98,20 +126,20 @@ jobs:
           set -euo pipefail
 
           APP="$RUNNER_TEMP/NOVAKIT-Build/Build/Products/Release-iphoneos/NOVAKIT.app"
+          PACKAGE_ROOT="$RUNNER_TEMP/NOVAKIT-package"
 
-          mkdir -p "$RUNNER_TEMP/package/Payload"
-          ditto "$APP" "$RUNNER_TEMP/package/Payload/NOVAKIT.app"
+          rm -rf "$PACKAGE_ROOT"
+          mkdir -p "$PACKAGE_ROOT/Payload"
+          ditto "$APP" "$PACKAGE_ROOT/Payload/NOVAKIT.app"
 
-          cd "$RUNNER_TEMP/package"
-
-          /usr/bin/zip -qry \
-            "$GITHUB_WORKSPACE/NOVAKIT-iOS16-unsigned.ipa" \
-            Payload
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
+            "$PACKAGE_ROOT/Payload" \
+            "$GITHUB_WORKSPACE/NOVAKIT-iOS16-unsigned.ipa"
 
           unzip -t "$GITHUB_WORKSPACE/NOVAKIT-iOS16-unsigned.ipa"
           test -s "$GITHUB_WORKSPACE/NOVAKIT-iOS16-unsigned.ipa"
 
-      - name: Upload IPA Artifact
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: NOVAKIT-iOS16-unsigned-IPA
