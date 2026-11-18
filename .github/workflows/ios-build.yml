@@ -1,0 +1,102 @@
+
+name: Build NOVAKIT iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '**.zip'
+      - '.github/workflows/ios-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    name: Build NOVAKIT unsigned IPA
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract uploaded source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARCHIVE="$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -iname '*.zip' -print -quit)"
+
+          if [[ -z "$ARCHIVE" ]]; then
+            echo "ERROR: No source ZIP found!"
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/novakit-source"
+          ditto -x -k "$ARCHIVE" "$RUNNER_TEMP/novakit-source"
+
+          PROJECT="$(find "$RUNNER_TEMP/novakit-source" -type d -name 'NOVAKIT.xcodeproj' -print -quit)"
+
+          if [[ -z "$PROJECT" ]]; then
+            echo "ERROR: NOVAKIT.xcodeproj not found!"
+            find "$RUNNER_TEMP/novakit-source" -maxdepth 5 -print
+            exit 1
+          fi
+
+          echo "PROJECT_PATH=$PROJECT" >> "$GITHUB_ENV"
+
+      - name: Inspect Xcode project
+        run: |
+          xcodebuild -version
+          xcodebuild -list -project "$PROJECT_PATH"
+
+      - name: Build for iPhone
+        shell: bash
+        run: |
+          set -o pipefail
+
+          xcodebuild \
+            -project "$PROJECT_PATH" \
+            -scheme NOVAKIT \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/NOVAKIT-DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PRODUCTS="$RUNNER_TEMP/NOVAKIT-DerivedData/Build/Products/Release-iphoneos"
+
+          APP_PATH="$(find "$PRODUCTS" -maxdepth 1 -type d -name '*.app' -print -quit)"
+
+          if [[ -z "$APP_PATH" ]]; then
+            echo "ERROR: No APP product found!"
+            ls -la "$PRODUCTS" || true
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/NOVAKIT-Package/Payload"
+
+          ditto "$APP_PATH" "$RUNNER_TEMP/NOVAKIT-Package/Payload/$(basename "$APP_PATH")"
+
+          cd "$RUNNER_TEMP/NOVAKIT-Package"
+
+          zip -qry "$GITHUB_WORKSPACE/NOVAKIT-unsigned.ipa" Payload
+
+          test -s "$GITHUB_WORKSPACE/NOVAKIT-unsigned.ipa"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVAKIT-unsigned-IPA
+          path: NOVAKIT-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
