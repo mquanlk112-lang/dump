@@ -1,7 +1,15 @@
 name: Build IPADumper
 
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
+    paths:
+      - 'Makefile'
+      - '.gitmodules'
+      - '**/*.mm'
+      - '**/*.m'
+      - '**/*.h'
+      - '**/*.xm'
   workflow_dispatch:
 
 jobs:
@@ -9,7 +17,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-        with: { submodules: recursive }
+        with:
+          submodules: recursive
 
       - name: Install Theos
         run: |
