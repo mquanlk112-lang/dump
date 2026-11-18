@@ -1,0 +1,79 @@
+
+name: Build NOVAKIT iOS 16 Unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'NovaKit/**'
+      - 'NOVAKIT.xcodeproj/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    name: Build NOVAKIT IPA
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Check Xcode
+        run: |
+          xcodebuild -version
+          xcodebuild -list -project NOVAKIT.xcodeproj
+
+      - name: Clean build
+        run: |
+          xcodebuild clean \
+            -project NOVAKIT.xcodeproj \
+            -scheme NOVAKIT \
+            -configuration Release
+
+      - name: Build iOS 16
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project NOVAKIT.xcodeproj \
+            -scheme NOVAKIT \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/NOVAKIT-Build" \
+            IPHONEOS_DEPLOYMENT_TARGET=16.0 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Verify app
+        run: |
+          APP="$RUNNER_TEMP/NOVAKIT-Build/Build/Products/Release-iphoneos/NOVAKIT.app"
+          test -d "$APP"
+          test -f "$APP/Info.plist"
+          echo "NOVAKIT APP VERIFIED"
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/NOVAKIT-Build/Build/Products/Release-iphoneos/NOVAKIT.app"
+          mkdir -p "$RUNNER_TEMP/package/Payload"
+          ditto "$APP" "$RUNNER_TEMP/package/Payload/NOVAKIT.app"
+          cd "$RUNNER_TEMP/package"
+          zip -qry "$GITHUB_WORKSPACE/NOVAKIT-iOS16-unsigned.ipa" Payload
+          test -s "$GITHUB_WORKSPACE/NOVAKIT-iOS16-unsigned.ipa"
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVAKIT-iOS16-unsigned-IPA
+          path: NOVAKIT-iOS16-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
