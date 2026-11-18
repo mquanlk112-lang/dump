@@ -1,12 +1,12 @@
-
 name: Build NOVAKIT iOS IPA
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '**.zip'
-      - '.github/workflows/ios-build.yml'
+      - 'NOVAKIT-GitHub-Actions 2.zip'
+      - 'NOVAKIT-GitHub-Actions.zip'
+      - 'NOVAKIT-source.zip'
 
 permissions:
   contents: read
@@ -15,49 +15,62 @@ jobs:
   build-ios:
     name: Build NOVAKIT unsigned IPA
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract uploaded source ZIP
+      - name: Locate and extract NOVAKIT source ZIP
+        id: source
         shell: bash
         run: |
           set -euo pipefail
 
-          ARCHIVE="$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -iname '*.zip' -print -quit)"
-
-          if [[ -z "$ARCHIVE" ]]; then
-            echo "ERROR: No source ZIP found!"
+          ARCHIVE="$GITHUB_WORKSPACE/NOVAKIT-GitHub-Actions 2.zip"
+          if [[ ! -f "$ARCHIVE" ]]; then
+            ARCHIVE="$GITHUB_WORKSPACE/NOVAKIT-GitHub-Actions.zip"
+          fi
+          if [[ ! -f "$ARCHIVE" ]]; then
+            ARCHIVE="$GITHUB_WORKSPACE/NOVAKIT-source.zip"
+          fi
+          if [[ ! -f "$ARCHIVE" ]]; then
+            echo "ERROR: Updated NOVAKIT source ZIP not found in repository root."
+            find "$GITHUB_WORKSPACE" -maxdepth 2 -type f -print
             exit 1
           fi
 
-          mkdir -p "$RUNNER_TEMP/novakit-source"
-          ditto -x -k "$ARCHIVE" "$RUNNER_TEMP/novakit-source"
+          EXTRACT_DIR="$RUNNER_TEMP/novakit-source"
+          mkdir -p "$EXTRACT_DIR"
+          ditto -x -k "$ARCHIVE" "$EXTRACT_DIR"
 
-          PROJECT="$(find "$RUNNER_TEMP/novakit-source" -type d -name 'NOVAKIT.xcodeproj' -print -quit)"
-
-          if [[ -z "$PROJECT" ]]; then
-            echo "ERROR: NOVAKIT.xcodeproj not found!"
-            find "$RUNNER_TEMP/novakit-source" -maxdepth 5 -print
+          PROJECT_PATH="$(find "$EXTRACT_DIR" -type d -name 'NOVAKIT.xcodeproj' -print -quit)"
+          if [[ -z "$PROJECT_PATH" ]]; then
+            echo "ERROR: NOVAKIT.xcodeproj not found in source ZIP."
+            find "$EXTRACT_DIR" -maxdepth 5 -print
             exit 1
           fi
 
-          echo "PROJECT_PATH=$PROJECT" >> "$GITHUB_ENV"
+          PROJECT_DIR="$(dirname "$PROJECT_PATH")"
+          echo "project_path=$PROJECT_PATH" >> "$GITHUB_OUTPUT"
+          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Using source archive: $ARCHIVE"
+          echo "Using Xcode project: $PROJECT_PATH"
 
-      - name: Inspect Xcode project
+      - name: Validate project and scheme
+        shell: bash
         run: |
+          set -euo pipefail
           xcodebuild -version
-          xcodebuild -list -project "$PROJECT_PATH"
+          xcodebuild -list -project "${{ steps.source.outputs.project_path }}"
+          plutil -lint "${{ steps.source.outputs.project_path }}/project.pbxproj"
 
-      - name: Build for iPhone
+      - name: Build for iPhone (unsigned)
         shell: bash
         run: |
           set -o pipefail
-
           xcodebuild \
-            -project "$PROJECT_PATH" \
+            -project "${{ steps.source.outputs.project_path }}" \
             -scheme NOVAKIT \
             -configuration Release \
             -sdk iphoneos \
@@ -72,25 +85,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           PRODUCTS="$RUNNER_TEMP/NOVAKIT-DerivedData/Build/Products/Release-iphoneos"
-
           APP_PATH="$(find "$PRODUCTS" -maxdepth 1 -type d -name '*.app' -print -quit)"
-
           if [[ -z "$APP_PATH" ]]; then
-            echo "ERROR: No APP product found!"
+            echo "ERROR: Build succeeded but no .app product was found."
             ls -la "$PRODUCTS" || true
             exit 1
           fi
 
           mkdir -p "$RUNNER_TEMP/NOVAKIT-Package/Payload"
-
           ditto "$APP_PATH" "$RUNNER_TEMP/NOVAKIT-Package/Payload/$(basename "$APP_PATH")"
-
           cd "$RUNNER_TEMP/NOVAKIT-Package"
-
-          zip -qry "$GITHUB_WORKSPACE/NOVAKIT-unsigned.ipa" Payload
-
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/NOVAKIT-unsigned.ipa" Payload
           test -s "$GITHUB_WORKSPACE/NOVAKIT-unsigned.ipa"
 
       - name: Upload IPA artifact
