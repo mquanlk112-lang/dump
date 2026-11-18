@@ -1,0 +1,127 @@
+
+name: Build NOVAKIT iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - '**/*.swift'
+      - '**/*.xcodeproj/**'
+      - '**/*.xcassets/**'
+      - '**/*.zip'
+      - '.github/workflows/novakit-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build NOVAKIT unsigned IPA
+    runs-on: macos-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Locate NOVAKIT source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT="$(find "$GITHUB_WORKSPACE" \
+            -type d -name 'NOVAKIT.xcodeproj' \
+            -print -quit)"
+
+          if [ -z "$PROJECT" ]; then
+            ARCHIVE="$(find "$GITHUB_WORKSPACE" \
+              -maxdepth 2 -type f -iname '*.zip' \
+              -print -quit)"
+
+            if [ -z "$ARCHIVE" ]; then
+              echo "ERROR: Source ZIP not found"
+              exit 1
+            fi
+
+            mkdir -p "$RUNNER_TEMP/novakit"
+            ditto -x -k "$ARCHIVE" "$RUNNER_TEMP/novakit"
+
+            PROJECT="$(find "$RUNNER_TEMP/novakit" \
+              -type d -name 'NOVAKIT.xcodeproj' \
+              -print -quit)"
+          fi
+
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: NOVAKIT.xcodeproj missing"
+            exit 1
+          fi
+
+          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
+          echo "Found: $PROJECT"
+
+      - name: Check Xcode
+        run: |
+          xcodebuild -version
+          xcodebuild -list \
+            -project "${{ steps.source.outputs.project }}"
+
+      - name: Validate project
+        run: |
+          plutil -lint \
+            "${{ steps.source.outputs.project }}/project.pbxproj"
+
+      - name: Build iOS Release
+        shell: bash
+        run: |
+          set -o pipefail
+
+          xcodebuild \
+            -project "${{ steps.source.outputs.project }}" \
+            -scheme NOVAKIT \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PRODUCTS="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos"
+
+          APP="$(find "$PRODUCTS" \
+            -maxdepth 1 -type d -name '*.app' \
+            -print -quit)"
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: No app product found"
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/package/Payload"
+
+          ditto "$APP" \
+            "$RUNNER_TEMP/package/Payload/$(basename "$APP")"
+
+          cd "$RUNNER_TEMP/package"
+
+          zip -qry "$GITHUB_WORKSPACE/NOVAKIT-unsigned.ipa" Payload
+
+          test -s "$GITHUB_WORKSPACE/NOVAKIT-unsigned.ipa"
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVAKIT-unsigned-IPA
+          path: NOVAKIT-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
