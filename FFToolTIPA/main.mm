@@ -158,14 +158,15 @@ static void FFClearHUDLog(void) {
     FFAppendHUDLog(@"DASHBOARD", @"Nhật ký đã được xoá theo yêu cầu");
 }
 
+static NSDictionary *FFReadHUDStatus(void);
+
 static void FFWriteHUDStatus(NSString *stage, NSString *detail) {
-    NSDictionary *status = @{
-        @"stage": stage ?: @"unknown",
-        @"detail": detail ?: @"",
-        @"updated": @([[NSDate date] timeIntervalSince1970]),
-        @"pid": @(getpid()),
-        @"ios": UIDevice.currentDevice.systemVersion ?: @"unknown"
-    };
+    NSMutableDictionary *status = [NSMutableDictionary dictionaryWithDictionary:FFReadHUDStatus()];
+    status[@"stage"] = stage ?: @"unknown";
+    status[@"detail"] = detail ?: @"";
+    status[@"updated"] = @([[NSDate date] timeIntervalSince1970]);
+    status[@"pid"] = @(getpid());
+    status[@"ios"] = UIDevice.currentDevice.systemVersion ?: @"unknown";
     BOOL saved = [status writeToFile:kFFHUDStatusPath atomically:YES];
     FFAppendHUDLog(@"STATUS", [NSString stringWithFormat:@"%@ | %@ | status_file=%@",
                                stage ?: @"unknown", detail ?: @"", saved ? @"ok" : @"failed"]);
@@ -174,6 +175,14 @@ static void FFWriteHUDStatus(NSString *stage, NSString *detail) {
 static NSDictionary *FFReadHUDStatus(void) {
     NSDictionary *status = [NSDictionary dictionaryWithContentsOfFile:kFFHUDStatusPath];
     return [status isKindOfClass:NSDictionary.class] ? status : @{};
+}
+
+static void FFClearHUDRuntimeState(void) {
+    NSMutableDictionary *status = [NSMutableDictionary dictionaryWithDictionary:FFReadHUDStatus()];
+    [status removeObjectForKey:@"frontmostBundleID"];
+    [status removeObjectForKey:@"foregroundMatch"];
+    [status removeObjectForKey:@"foregroundUpdated"];
+    [status writeToFile:kFFHUDStatusPath atomically:YES];
 }
 
 static void FFWriteHUDRuntimeState(NSString *bundleID, BOOL foregroundMatch) {
@@ -1613,6 +1622,7 @@ static int FFStartHUDMode(void) {
                                   withIntermediateDirectories:YES attributes:nil error:nil];
         NSString *pid = [NSString stringWithFormat:@"%d", getpid()];
         [pid writeToFile:kFFHUDPIDPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        FFClearHUDRuntimeState();
         FFWriteHUDStatus(@"process_started", @"HUD child process started");
         FFAppendHUDLog(@"BOOT", [NSString stringWithFormat:@"HUD child process started | pid=%d", getpid()]);
         UIDevice.currentDevice.batteryMonitoringEnabled = YES;
