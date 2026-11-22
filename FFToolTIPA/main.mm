@@ -25,6 +25,8 @@ extern "C" int posix_spawnattr_set_persona_gid_np(const posix_spawnattr_t *, uid
 #endif
 
 extern "C" void GSInitialize(void);
+extern "C" void GSEventInitialize(int type);
+extern "C" void GSEventPushRunLoopMode(CFStringRef mode);
 extern "C" void BKSDisplayServicesStart(void);
 extern "C" void UIApplicationInitialize(void);
 extern "C" void UIApplicationInstantiateSingleton(id applicationClass);
