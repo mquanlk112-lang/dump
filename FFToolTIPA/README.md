@@ -1,0 +1,18 @@
+# FF Tool 2.0 — Single TIPA
+
+This project builds one TrollStore-installable `FFTool.tipa` containing:
+- The FF Tool dashboard UI (purple neon reference design).
+- The same executable started in a separate root HUD mode.
+- A draggable, expandable system overlay that displays device battery, iOS thermal-pressure state, estimated free RAM and uptime.
+
+## Build and install
+
+Build with Theos on macOS using the repository workflow. Install the single `FFTool.tipa` from TrollStore. No separate .deb is produced as an install artifact.
+
+Open FF Tool, press **Bật HUD trên màn hình**, then switch to another app. The HUD can be dragged and tapped to expand/collapse. Press **Tắt HUD nổi** in FF Tool to stop it.
+
+## Scope and limits
+
+The child HUD process is spawned by the TrollStore-installed app with the required persona settings and uses an accessibility-hosted system window. It does not inject into Free Fire, read game memory, alter gameplay, or inspect match data. The overlay is an independent device-status display. This requires the TrollStore entitlement path and may depend on iOS / TrollStore compatibility; build success does not prove on-device support.
+
+Temperature uses Apple's thermal-pressure category rather than °C. Free RAM is an estimate based on free VM pages.
