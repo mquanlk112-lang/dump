@@ -389,7 +389,6 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.system(size: 10, weight: .heavy, design: .rounded))
-                .tracking(1.0)
                 .foregroundColor(accent)
             Text(subtitle)
                 .font(.system(size: 19, weight: .bold, design: .rounded))
