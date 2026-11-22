@@ -87,16 +87,16 @@ jobs:
           set -euo pipefail
           STAGE="$RUNNER_TEMP/FFTool-Combined-Root"
           rm -rf "$STAGE"
-          mkdir -p "$STAGE/DEBIAN" "$STAGE/Applications"
+          mkdir -p "$STAGE/DEBIAN" "$STAGE/var/jb/Applications"
           dpkg-deb -x "$TWEAK_DEB" "$STAGE"
-          ditto "$APP_PATH" "$STAGE/Applications/FF Tool.app"
+          ditto "$APP_PATH" "$STAGE/var/jb/Applications/FF Tool.app"
 
           # Sign app and embedded extension executables for jailbreak installation.
           while IFS= read -r -d '' FILE; do
             if file "$FILE" | grep -q 'Mach-O'; then
               ldid -S "$FILE"
             fi
-          done < <(find "$STAGE/Applications/FF Tool.app" -type f -print0)
+          done < <(find "$STAGE/var/jb/Applications/FF Tool.app" -type f -print0)
 
           cat > "$STAGE/DEBIAN/control" <<'EOF'
           Package: com.minhquandev.fftool
@@ -113,17 +113,21 @@ jobs:
           cat > "$STAGE/DEBIAN/postinst" <<'EOF'
           #!/bin/sh
           set -e
-          if [ -x /usr/bin/uicache ]; then
-            /usr/bin/uicache -p "/Applications/FF Tool.app" >/dev/null 2>&1 || true
+          if [ -x /var/jb/usr/bin/uicache ]; then
+            /var/jb/usr/bin/uicache -p "/var/jb/Applications/FF Tool.app" >/dev/null 2>&1 || true
+          elif [ -x /usr/bin/uicache ]; then
+            /usr/bin/uicache -p "/var/jb/Applications/FF Tool.app" >/dev/null 2>&1 || true
           elif command -v uicache >/dev/null 2>&1; then
-            uicache -p "/Applications/FF Tool.app" >/dev/null 2>&1 || true
+            uicache -p "/var/jb/Applications/FF Tool.app" >/dev/null 2>&1 || true
           fi
           exit 0
           EOF
 
           cat > "$STAGE/DEBIAN/prerm" <<'EOF'
           #!/bin/sh
-          if command -v notifyutil >/dev/null 2>&1; then
+          if [ -x /var/jb/usr/bin/notifyutil ]; then
+            /var/jb/usr/bin/notifyutil -p com.minhquandev.devicescope.hud.hide >/dev/null 2>&1 || true
+          elif command -v notifyutil >/dev/null 2>&1; then
             notifyutil -p com.minhquandev.devicescope.hud.hide >/dev/null 2>&1 || true
           fi
           exit 0
@@ -131,7 +135,9 @@ jobs:
 
           cat > "$STAGE/DEBIAN/postrm" <<'EOF'
           #!/bin/sh
-          if command -v uicache >/dev/null 2>&1; then
+          if [ -x /var/jb/usr/bin/uicache ]; then
+            /var/jb/usr/bin/uicache -u com.minhquandev.devicescope >/dev/null 2>&1 || true
+          elif command -v uicache >/dev/null 2>&1; then
             uicache -u com.minhquandev.devicescope >/dev/null 2>&1 || true
           fi
           exit 0
@@ -142,7 +148,7 @@ jobs:
           dpkg-deb --root-owner-group --build "$STAGE" "$GITHUB_WORKSPACE/out/FFTool-Combined.deb"
           dpkg-deb --info "$GITHUB_WORKSPACE/out/FFTool-Combined.deb"
           dpkg-deb --contents "$GITHUB_WORKSPACE/out/FFTool-Combined.deb"
-          dpkg-deb -c "$GITHUB_WORKSPACE/out/FFTool-Combined.deb" | grep -q 'Applications/FF Tool.app/Info.plist'
+          dpkg-deb -c "$GITHUB_WORKSPACE/out/FFTool-Combined.deb" | grep -q 'var/jb/Applications/FF Tool.app/Info.plist'
           dpkg-deb -c "$GITHUB_WORKSPACE/out/FFTool-Combined.deb" | grep -q 'var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceScopeHUD.dylib'
           dpkg-deb -c "$GITHUB_WORKSPACE/out/FFTool-Combined.deb" | grep -q 'var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceScopeHUD.plist'
           plutil -lint "$STAGE/var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceScopeHUD.plist"
