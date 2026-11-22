@@ -39,6 +39,7 @@ static NSSet<NSString *> *FFGameBundleIDs(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         ids = [NSSet setWithArray:@[
+            @"vn.vng.freefireth",
             @"com.dts.freefireth",
             @"com.dts.freefiremax",
             @"com.garena.game.ffi"
@@ -91,6 +92,7 @@ static NSString *FFCurrentFrontmostBundleID(void) {
     NSMutableDictionary<NSString *, NSNumber *> *currentStates = [NSMutableDictionary dictionary];
     NSString *matchedBundleID = nil;
     NSArray<NSString *> *candidates = @[
+        @"vn.vng.freefireth",
         @"com.dts.freefireth",
         @"com.dts.freefiremax",
         @"com.garena.game.ffi"
@@ -490,7 +492,9 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @end
 
 @interface FFHUDWindow : UIWindow
-@property(nonatomic, weak) UIView *interactivePanel;
+@end
+
+@interface FFHUDMenuWindow : UIWindow
 @end
 
 @implementation FFToolAppDelegate
@@ -1312,15 +1316,23 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 
 #pragma mark - System-wide HUD process
 
+// Mirrors Mail Temp's non-interactive HUDMainWindow: render-only, never consumes touches.
 @implementation FFHUDWindow
 + (BOOL)_isSystemWindow { return YES; }
 - (BOOL)_isWindowServerHostingManaged { return NO; }
 - (BOOL)_isSecure { return YES; }
 - (BOOL)_shouldCreateContextAsSecure { return YES; }
-- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
-    if (!self.interactivePanel) return NO;
-    return CGRectContainsPoint(self.interactivePanel.frame, point);
-}
+- (BOOL)_ignoresHitTest { return YES; }
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event { return NO; }
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event { return nil; }
+@end
+
+// Mirrors Mail Temp's separate HUDMenuWindow, hosted independently from the render window.
+@implementation FFHUDMenuWindow
++ (BOOL)_isSystemWindow { return YES; }
+- (BOOL)_isWindowServerHostingManaged { return NO; }
+- (BOOL)_isSecure { return YES; }
+- (BOOL)_shouldCreateContextAsSecure { return YES; }
 @end
 
 @interface FFHUDPanelView ()
@@ -1416,6 +1428,40 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     self.detailLabel.text = [NSString stringWithFormat:@"NHIỆT: %@\nRAM FREE: %lu MB", FFThermalText(), (unsigned long)FFFreeRAMMB()];
     self.footerLabel.text = [NSString stringWithFormat:@"UPTIME: %@  ·  CHẠM ĐỂ THU GỌN", FFUptimeText()];
     self.layer.borderColor = (FFThermalWarning() ? UIColor.orangeColor : FFAccent()).CGColor;
+}
+@end
+
+// The menu window only accepts hit-tests inside the draggable HUD panel.
+@interface FFHUDMenuPassThroughView : UIView
+@property(nonatomic, weak) FFHUDPanelView *panel;
+@end
+
+@implementation FFHUDMenuPassThroughView
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    if (!self.panel || self.panel.hidden) return NO;
+    return CGRectContainsPoint(self.panel.frame, point);
+}
+@end
+
+@interface FFHUDMenuViewController : UIViewController
+@property(nonatomic, strong) FFHUDPanelView *panel;
+- (instancetype)initWithPanel:(FFHUDPanelView *)panel;
+@end
+
+@implementation FFHUDMenuViewController
+- (instancetype)initWithPanel:(FFHUDPanelView *)panel {
+    self = [super initWithNibName:nil bundle:nil];
+    if (self) _panel = panel;
+    return self;
+}
+- (void)loadView {
+    FFHUDMenuPassThroughView *root = [[FFHUDMenuPassThroughView alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    root.backgroundColor = UIColor.clearColor;
+    root.opaque = NO;
+    root.panel = self.panel;
+    self.view = root;
+    self.panel.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleBottomMargin;
+    [root addSubview:self.panel];
 }
 @end
 
@@ -1519,8 +1565,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     CGFloat width = 168;
     self.panel = [[FFHUDPanelView alloc] initWithFrame:CGRectMake(MAX(4, bounds.size.width - width - 8), 112, width, 38)];
     self.panel.expanded = NO;
-    [self.view addSubview:self.panel];
-
+    // The panel is attached to the separate HUDMenuWindow by FFHUDAppDelegate.
     self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:0.5
                                                          target:self
                                                        selector:@selector(refreshHUD)
@@ -1582,12 +1627,65 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 
 @implementation FFHUDAppDelegate {
     id _windowHostingController;
+    id _menuHostingController;
+    UIWindow *_menuWindow;
+}
+
+- (id)registerWindow:(UIWindow *)window role:(NSString *)role {
+    Class hostClass = NSClassFromString(@"SBSAccessibilityWindowHostingController");
+    if (!hostClass) {
+        FFAppendHUDLog(@"HOST", [NSString stringWithFormat:@"%@ host class lookup returned nil", role]);
+        FFWriteHUDStatus(@"host_class_missing", [NSString stringWithFormat:@"%@ SBSAccessibilityWindowHostingController was not found", role]);
+        return nil;
+    }
+
+    id host = [[hostClass alloc] init];
+    SEL registerSelector = NSSelectorFromString(@"registerWindowWithContextID:atLevel:");
+    if (!host || ![host respondsToSelector:registerSelector]) {
+        FFAppendHUDLog(@"HOST", [NSString stringWithFormat:@"%@ registration selector missing", role]);
+        FFWriteHUDStatus(@"register_selector_missing", [NSString stringWithFormat:@"%@ host registration selector is unavailable", role]);
+        return nil;
+    }
+
+    unsigned int contextID = [window _contextId];
+    double windowLevel = window.windowLevel;
+    FFAppendHUDLog(@"HOST", [NSString stringWithFormat:@"role=%@ | class=%@ | context_id=%u | level=%.2f | host=%@",
+                               role, NSStringFromClass(window.class), contextID, windowLevel, host]);
+    if (contextID == 0) {
+        FFWriteHUDStatus(@"window_context_missing", [NSString stringWithFormat:@"%@ UIWindow returned an empty context ID", role]);
+        return nil;
+    }
+
+    NSMethodSignature *signature = [NSMethodSignature signatureWithObjCTypes:"v@:Id"];
+    if (!signature) {
+        FFWriteHUDStatus(@"registration_signature_missing", [NSString stringWithFormat:@"%@ could not create host method signature", role]);
+        return nil;
+    }
+
+    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+    [invocation setTarget:host];
+    [invocation setSelector:registerSelector];
+    [invocation setArgument:&contextID atIndex:2];
+    [invocation setArgument:&windowLevel atIndex:3];
+    @try {
+        [invocation invoke];
+    } @catch (NSException *exception) {
+        NSString *reason = [NSString stringWithFormat:@"%@ registration exception | name=%@ | reason=%@",
+                            role, exception.name ?: @"unknown", exception.reason ?: @"(none)"];
+        FFAppendHUDLog(@"HOST_EXCEPTION", reason);
+        FFWriteHUDStatus(@"registration_exception", reason);
+        return nil;
+    }
+
+    FFAppendHUDLog(@"HOST", [NSString stringWithFormat:@"%@ registration call returned without Objective-C exception", role]);
+    return host;
 }
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     FFWriteHUDStatus(@"delegate_started", @"HUD app delegate started");
     FFAppendHUDLog(@"APP_DELEGATE", [NSString stringWithFormat:@"delegate=%@ | principal_class=%@", NSStringFromClass(self.class), NSStringFromClass(UIApplication.sharedApplication.class)]);
 
+    // Render-only system window: the ring never participates in touch hit-testing.
     self.window = [[FFHUDWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     FFHUDViewController *controller = [[FFHUDViewController alloc] init];
     (void)controller.view;
@@ -1595,62 +1693,38 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     self.window.backgroundColor = UIColor.clearColor;
     self.window.opaque = NO;
     self.window.windowLevel = 10000010.0;
-    ((FFHUDWindow *)self.window).interactivePanel = controller.panel;
     [self.window setHidden:NO];
     [self.window makeKeyAndVisible];
-    FFWriteHUDStatus(@"window_created", @"HUD UIWindow created and made visible");
-    FFAppendHUDLog(@"WINDOW", [NSString stringWithFormat:@"class=%@ | frame=%@ | level=%.2f | hidden=%@ | key=%@", NSStringFromClass(self.window.class), NSStringFromCGRect(self.window.frame), self.window.windowLevel, self.window.hidden ? @"YES" : @"NO", self.window.isKeyWindow ? @"YES" : @"NO"]);
+    FFWriteHUDStatus(@"main_window_created", @"Non-interactive HUDMainWindow created");
+    FFAppendHUDLog(@"WINDOW", [NSString stringWithFormat:@"role=main | class=%@ | frame=%@ | level=%.2f | hidden=%@",
+                               NSStringFromClass(self.window.class), NSStringFromCGRect(self.window.frame),
+                               self.window.windowLevel, self.window.hidden ? @"YES" : @"NO"]);
 
-    Class hostClass = NSClassFromString(@"SBSAccessibilityWindowHostingController");
-    if (!hostClass) {
-        FFAppendHUDLog(@"HOST", @"SBSAccessibilityWindowHostingController class lookup returned nil");
-        FFWriteHUDStatus(@"host_class_missing", @"SBSAccessibilityWindowHostingController was not found");
+    _windowHostingController = [self registerWindow:self.window role:@"main"];
+    if (!_windowHostingController) return YES;
+    FFWriteHUDStatus(@"main_window_hosted", @"HUDMainWindow registration call returned");
+
+    // Separate pass-through menu window, matching Mail Temp's HUDMenuWindow architecture.
+    _menuWindow = [[FFHUDMenuWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    FFHUDMenuViewController *menuController = [[FFHUDMenuViewController alloc] initWithPanel:controller.panel];
+    _menuWindow.rootViewController = menuController;
+    _menuWindow.backgroundColor = UIColor.clearColor;
+    _menuWindow.opaque = NO;
+    _menuWindow.windowLevel = self.window.windowLevel + 1.0;
+    [_menuWindow setHidden:NO];
+    [_menuWindow makeKeyAndVisible];
+    FFWriteHUDStatus(@"menu_window_created", @"Interactive HUDMenuWindow created separately");
+    FFAppendHUDLog(@"WINDOW", [NSString stringWithFormat:@"role=menu | class=%@ | frame=%@ | level=%.2f | hidden=%@",
+                               NSStringFromClass(_menuWindow.class), NSStringFromCGRect(_menuWindow.frame),
+                               _menuWindow.windowLevel, _menuWindow.hidden ? @"YES" : @"NO"]);
+
+    _menuHostingController = [self registerWindow:_menuWindow role:@"menu"];
+    if (!_menuHostingController) {
+        [_menuWindow setHidden:YES];
         return YES;
     }
 
-    // Retain the host controller for the full lifetime of the HUD delegate.
-    // TrollSpeed uses the same lifetime model through its _windowHostingController ivar.
-    _windowHostingController = [[hostClass alloc] init];
-    FFAppendHUDLog(@"HOST", [NSString stringWithFormat:@"host class=%@ | instance=%@", NSStringFromClass(hostClass), _windowHostingController]);
-
-    SEL registerSelector = NSSelectorFromString(@"registerWindowWithContextID:atLevel:");
-    if (![_windowHostingController respondsToSelector:registerSelector]) {
-        FFAppendHUDLog(@"HOST", [NSString stringWithFormat:@"selector missing: %@", NSStringFromSelector(registerSelector)]);
-        FFWriteHUDStatus(@"register_selector_missing", @"Window host registration selector is unavailable");
-        return YES;
-    }
-
-    unsigned int contextID = [self.window _contextId];
-    double windowLevel = self.window.windowLevel;
-    FFAppendHUDLog(@"HOST", [NSString stringWithFormat:@"context_id=%u | level=%.2f", contextID, windowLevel]);
-    if (contextID == 0) {
-        FFWriteHUDStatus(@"window_context_missing", @"UIWindow returned an empty context ID");
-        return YES;
-    }
-
-    NSMethodSignature *signature = [NSMethodSignature signatureWithObjCTypes:"v@:Id"];
-    if (!signature) {
-        FFWriteHUDStatus(@"registration_signature_missing", @"Could not create window host method signature");
-        return YES;
-    }
-
-    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
-    [invocation setTarget:_windowHostingController];
-    [invocation setSelector:registerSelector];
-    [invocation setArgument:&contextID atIndex:2];
-    [invocation setArgument:&windowLevel atIndex:3];
-    @try {
-        [invocation invoke];
-    } @catch (NSException *exception) {
-        NSString *reason = [NSString stringWithFormat:@"registration exception | name=%@ | reason=%@", exception.name ?: @"unknown", exception.reason ?: @"(none)"];
-        FFAppendHUDLog(@"HOST_EXCEPTION", reason);
-        FFWriteHUDStatus(@"registration_exception", reason);
-        return YES;
-    }
-
-    FFAppendHUDLog(@"HOST", @"registerWindowWithContextID:atLevel: invocation returned without Objective-C exception; private API does not expose a success result");
-    FFWriteHUDStatus(@"window_hosted", @"HUD window registration call returned without Objective-C exception");
-
+    FFWriteHUDStatus(@"window_hosted", @"Main render window and separate menu window registration calls returned");
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         typeof(self) strongSelf = weakSelf;
@@ -1690,7 +1764,13 @@ static int FFRunHUDProcess(void) {
     }
 
     [application __completeAndRunAsPlugin];
-    FFWriteHUDStatus(@"plugin_running", @"HUD plugin run loop started");
+    NSDictionary *hostStatus = FFReadHUDStatus();
+    NSString *hostStage = hostStatus[@"stage"] ?: @"unknown";
+    if ([hostStage isEqualToString:@"window_hosted"]) {
+        FFWriteHUDStatus(@"plugin_running", @"HUD plugin run loop started; main and menu windows registered");
+    } else {
+        FFAppendHUDLog(@"BOOT", [NSString stringWithFormat:@"Plugin loop entered with window-hosting incomplete | stage=%@", hostStage]);
+    }
     CFRunLoopRun();
     return EXIT_SUCCESS;
 }
