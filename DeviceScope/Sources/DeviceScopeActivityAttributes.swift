@@ -1,6 +1,7 @@
 import ActivityKit
 import Foundation
 
+@available(iOS 16.1, *)
 struct DeviceScopeActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         let batteryPercent: Int

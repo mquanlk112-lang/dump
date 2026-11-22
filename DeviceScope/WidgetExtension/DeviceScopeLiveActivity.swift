@@ -108,9 +108,9 @@ private struct DeviceScopeLockScreenView: View {
 }
 
 private func batteryText(_ value: Int) -> String {
-    value >= 0 ? "\\(value)%" : "—"
+    value >= 0 ? "\(value)%" : "—"
 }
 
 private func memoryText(_ value: Int) -> String {
-    value >= 0 ? "\\(value) MB" : "—"
+    value >= 0 ? "\(value) MB" : "—"
 }

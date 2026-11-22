@@ -179,6 +179,7 @@ struct DashboardView: View {
         .background(cardBackground)
     }
 
+    @available(iOS 16.1, *)
     private func makeLiveActivityState() -> DeviceScopeActivityAttributes.ContentState {
         DeviceScopeActivityAttributes.ContentState(
             batteryPercent: snapshot.batteryLevel ?? -1,
@@ -242,7 +243,7 @@ struct DashboardView: View {
             liveActivityMessage = "Đã bật. Mở game để xem chỉ số trên Dynamic Island; số liệu sẽ là lần đọc gần nhất của ứng dụng."
         } catch {
             isLiveActivityActive = false
-            liveActivityMessage = "Không bật được Live Activity: \\(error.localizedDescription)"
+            liveActivityMessage = "Không bật được Live Activity: \(error.localizedDescription)"
         }
     }
 
