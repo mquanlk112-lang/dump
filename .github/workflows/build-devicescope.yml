@@ -64,6 +64,11 @@ jobs:
           plutil -lint "$RUNNER_TEMP/FFTool-entitlements.plist"
           grep -q 'com.apple.private.persona-mgmt' "$RUNNER_TEMP/FFTool-entitlements.plist"
           grep -q 'com.apple.springboard.accessibility-window-hosting' "$RUNNER_TEMP/FFTool-entitlements.plist"
+          strings -a "$RUNNER_TEMP/FFTool-executable" | grep -q 'FFToolAPI'
+          strings -a "$RUNNER_TEMP/FFTool-executable" | grep -q 'selfTest'
+          strings -a "$RUNNER_TEMP/FFTool-executable" | grep -q 'settingsWithDefaults:'
+          strings -a "$RUNNER_TEMP/FFTool-executable" | grep -q 'publishEvent:payload:'
+          strings -a "$RUNNER_TEMP/FFTool-executable" | grep -q 'hud.status.changed'
           shasum -a 256 packages/FFTool.tipa
 
       - name: Upload single TIPA artifact
