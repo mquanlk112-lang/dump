@@ -253,9 +253,17 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
         NSString *stage = status[@"stage"] ?: @"no_status";
         NSString *detail = status[@"detail"] ?: @"HUD process has not reported its window state";
         BOOL hosted = [stage isEqualToString:@"window_hosted"] || [stage isEqualToString:@"plugin_running"];
+
+        if (running && !hosted) {
+            // Do not leave a headless root HUD process running when system-window
+            // registration failed. Preserve the diagnostic file for the UI.
+            FFSpawnRootCommand("-exit", NO);
+            running = FFHUDIsRunning();
+        }
+
         if (message) {
-            if (!running) *message = @"HUD process đã thoát ngay sau khi khởi chạy. Kiểm tra TrollStore và log hệ thống.";
-            else if (!hosted) *message = [NSString stringWithFormat:@"HUD process còn chạy nhưng cửa sổ chưa đăng ký (%@): %@", stage, detail];
+            if (!running && !hosted) *message = [NSString stringWithFormat:@"HUD chưa đăng ký được cửa sổ (%@): %@", stage, detail];
+            else if (!hosted) *message = @"HUD process đã thoát trước khi đăng ký cửa sổ. Mở lại app và kiểm tra log hệ thống.";
             else *message = @"Cửa sổ HUD đã được đăng ký. Chuyển sang Free Fire; ngoài Free Fire HUD sẽ tự ẩn.";
         }
         return running && hosted;
