@@ -2,11 +2,14 @@ import SwiftUI
 import UIKit
 import Combine
 import ActivityKit
+import CoreFoundation
 
 struct DashboardView: View {
     @State private var snapshot = DeviceSnapshot.capture()
     @State private var showingAbout = false
     @State private var isLiveActivityActive = false
+    @AppStorage("devicescope.systemHUD.enabled") private var isSystemHUDEnabled = false
+    @State private var systemHUDMessage = "Bật HUD nổi ở SpringBoard để xem trạng thái thiết bị khi đang dùng ứng dụng khác."
     @State private var liveActivityMessage = "Nhấn Bật trước khi mở game. Dynamic Island hiển thị lần đọc gần nhất; iOS có thể tạm dừng cập nhật khi game ở foreground."
     @State private var lastLiveActivityUpdate = Date.distantPast
     private let refreshTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
@@ -24,6 +27,7 @@ struct DashboardView: View {
                     header
                     deviceCard
                     liveActivityCard
+                    systemHUDCard
                     thermalCard
                     metricsGrid
                     footer
@@ -38,6 +42,7 @@ struct DashboardView: View {
             UIDevice.current.isBatteryMonitoringEnabled = true
             snapshot = DeviceSnapshot.capture()
             refreshLiveActivityStatus()
+            if isSystemHUDEnabled { postSystemHUDCommand("show") }
         }
         .onReceive(refreshTimer) { _ in
             snapshot = DeviceSnapshot.capture()
@@ -177,6 +182,78 @@ struct DashboardView: View {
         }
         .padding(16)
         .background(cardBackground)
+    }
+
+
+    private var systemHUDCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Color.purple.opacity(0.16))
+                        .frame(width: 46, height: 46)
+                    Image(systemName: "rectangle.inset.filled")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(Color.purple.opacity(0.95))
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("HUD NỔI TOÀN HỆ THỐNG")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.52))
+                    Text(isSystemHUDEnabled ? "Đã gửi lệnh bật HUD" : "Hiển thị trên màn hình ứng dụng khác")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                Spacer(minLength: 4)
+                Button(action: toggleSystemHUD) {
+                    Text(isSystemHUDEnabled ? "Tắt" : "Bật")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            isSystemHUDEnabled ? Color.red.opacity(0.22) : Color.purple.opacity(0.24),
+                            in: Capsule()
+                        )
+                        .overlay(
+                            Capsule().stroke(
+                                isSystemHUDEnabled ? Color.red.opacity(0.38) : Color.purple.opacity(0.42),
+                                lineWidth: 1
+                            )
+                        )
+                }
+            }
+            Text(systemHUDMessage)
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.48))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("HUD chỉ đọc pin, trạng thái nhiệt, RAM trống ước lượng và uptime. Tweak chỉ chạy trong SpringBoard, không hook tiến trình Free Fire.")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.36))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .background(cardBackground)
+    }
+
+    private func postSystemHUDCommand(_ command: String) {
+        let name = CFNotificationName("com.minhquandev.devicescope.hud.\(command)" as CFString)
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            name,
+            nil,
+            nil,
+            true
+        )
+    }
+
+    private func toggleSystemHUD() {
+        let next = !isSystemHUDEnabled
+        isSystemHUDEnabled = next
+        postSystemHUDCommand(next ? "show" : "hide")
+        systemHUDMessage = next
+            ? "Đã gửi lệnh bật. Cần cài DeviceScopeHUD.deb và respring SpringBoard để HUD xuất hiện."
+            : "Đã gửi lệnh tắt HUD nổi."
     }
 
     @available(iOS 16.1, *)
