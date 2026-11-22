@@ -218,6 +218,9 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @property(nonatomic, strong) UIWindow *window;
 @end
 
+@implementation FFHUDApplication
+@end
+
 @interface FFHUDPanelView : UIView
 @property(nonatomic, assign) BOOL expanded;
 - (void)refreshMetrics;
