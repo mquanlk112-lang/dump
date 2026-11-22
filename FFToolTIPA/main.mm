@@ -12,6 +12,7 @@
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #import <errno.h>
+#import <fcntl.h>
 #import <stdlib.h>
 #import <string.h>
 #import <math.h>
@@ -45,17 +46,27 @@ static NSSet<NSString *> *FFGameBundleIDs(void) {
     return ids;
 }
 
-static BOOL FFIsFreeFireForeground(void) {
+static NSString *FFCurrentFrontmostBundleID(void) {
     CFStringRef identifier = SBSCopyFrontmostApplicationDisplayIdentifier();
-    if (!identifier) return NO;
-    NSString *bundleID = (__bridge NSString *)identifier;
-    BOOL matches = [FFGameBundleIDs() containsObject:bundleID];
-    CFRelease(identifier);
-    return matches;
+    NSString *bundleID = identifier ? [((__bridge NSString *)identifier) copy] : @"<unavailable>";
+    if (identifier) CFRelease(identifier);
+
+    static NSString *lastBundleID = nil;
+    if (!lastBundleID || ![lastBundleID isEqualToString:bundleID]) {
+        FFAppendHUDLog(@"FRONTMOST", [NSString stringWithFormat:@"bundle_id=%@", bundleID]);
+        lastBundleID = [bundleID copy];
+    }
+    return bundleID;
+}
+
+static BOOL FFIsFreeFireForeground(void) {
+    NSString *bundleID = FFCurrentFrontmostBundleID();
+    return [FFGameBundleIDs() containsObject:bundleID];
 }
 
 static NSString * const kFFHUDPIDPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud.pid";
 static NSString * const kFFHUDStatusPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud-status.plist";
+static NSString * const kFFHUDLogPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud.log";
 static NSString * const kFFHUDSettingsPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud-settings.plist";
 static const CGFloat kFFPurple = 0.68;
 
@@ -86,13 +97,81 @@ static BOOL FFSaveHUDSettings(NSDictionary *settings) {
     return [settings writeToFile:kFFHUDSettingsPath atomically:YES];
 }
 
+static void FFAppendHUDLog(NSString *category, NSString *message) {
+    @autoreleasepool {
+        static NSDateFormatter *formatter;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            formatter = [[NSDateFormatter alloc] init];
+            formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+            formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
+        });
+
+        NSString *line = [NSString stringWithFormat:@"%@ | pid=%d | %@ | %@\n",
+                          [formatter stringFromDate:[NSDate date]],
+                          getpid(),
+                          category ?: @"LOG",
+                          message ?: @""];
+        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+        NSString *directory = [kFFHUDLogPath stringByDeletingLastPathComponent];
+        [NSFileManager.defaultManager createDirectoryAtPath:directory
+                                  withIntermediateDirectories:YES
+                                                   attributes:nil
+                                                        error:nil];
+
+        NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:kFFHUDLogPath error:nil];
+        unsigned long long currentSize = [attributes fileSize];
+        if (currentSize > 512 * 1024) {
+            NSData *existing = [NSData dataWithContentsOfFile:kFFHUDLogPath];
+            NSUInteger keepBytes = MIN((NSUInteger)(384 * 1024), existing.length);
+            NSData *tail = [existing subdataWithRange:NSMakeRange(existing.length - keepBytes, keepBytes)];
+            [tail writeToFile:kFFHUDLogPath atomically:YES];
+        }
+
+        @try {
+            NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:kFFHUDLogPath];
+            if (!handle) {
+                [NSFileManager.defaultManager createFileAtPath:kFFHUDLogPath contents:[NSData data] attributes:nil];
+                handle = [NSFileHandle fileHandleForWritingAtPath:kFFHUDLogPath];
+            }
+            [handle seekToEndOfFile];
+            [handle writeData:data];
+            [handle closeFile];
+        } @catch (NSException *exception) {
+            NSLog(@"[FFToolHUD] log write failed: %@", exception);
+        }
+        NSLog(@"[FFToolHUD] %@", [line stringByTrimmingCharactersInSet:NSCharacterSet.newlineCharacterSet]);
+    }
+}
+
+static NSString *FFReadHUDLogTail(NSUInteger maxLines) {
+    NSString *contents = [NSString stringWithContentsOfFile:kFFHUDLogPath
+                                                    encoding:NSUTF8StringEncoding
+                                                       error:nil];
+    if (!contents.length) return @"Chưa có nhật ký. Bật HUD để bắt đầu ghi log.";
+    NSArray<NSString *> *lines = [contents componentsSeparatedByString:@"\n"];
+    NSMutableArray<NSString *> *valid = [NSMutableArray array];
+    for (NSString *line in lines) if (line.length) [valid addObject:line];
+    NSUInteger start = valid.count > maxLines ? valid.count - maxLines : 0;
+    return [[valid subarrayWithRange:NSMakeRange(start, valid.count - start)] componentsJoinedByString:@"\n"];
+}
+
+static void FFClearHUDLog(void) {
+    [@"" writeToFile:kFFHUDLogPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    FFAppendHUDLog(@"DASHBOARD", @"Nhật ký đã được xoá theo yêu cầu");
+}
+
 static void FFWriteHUDStatus(NSString *stage, NSString *detail) {
     NSDictionary *status = @{
         @"stage": stage ?: @"unknown",
         @"detail": detail ?: @"",
-        @"updated": @([[NSDate date] timeIntervalSince1970])
+        @"updated": @([[NSDate date] timeIntervalSince1970]),
+        @"pid": @(getpid()),
+        @"ios": UIDevice.currentDevice.systemVersion ?: @"unknown"
     };
-    [status writeToFile:kFFHUDStatusPath atomically:YES];
+    BOOL saved = [status writeToFile:kFFHUDStatusPath atomically:YES];
+    FFAppendHUDLog(@"STATUS", [NSString stringWithFormat:@"%@ | %@ | status_file=%@",
+                               stage ?: @"unknown", detail ?: @"", saved ? @"ok" : @"failed"]);
 }
 
 static NSDictionary *FFReadHUDStatus(void) {
@@ -200,6 +279,7 @@ static NSString *FFExecutablePath(void) {
 }
 
 static int FFSpawnRootCommand(const char *command, BOOL detach) {
+    FFAppendHUDLog(@"SPAWN", [NSString stringWithFormat:@"command=%s | detach=%@", command ?: "(null)", detach ? @"YES" : @"NO"]);
     NSString *path = FFExecutablePath();
     if (!path.length) return ENOENT;
 
@@ -218,7 +298,11 @@ static int FFSpawnRootCommand(const char *command, BOOL detach) {
     const char *arguments[] = { path.UTF8String, command, NULL };
     int result = posix_spawn(&child, path.UTF8String, NULL, &attributes, (char * const *)arguments, environ);
     posix_spawnattr_destroy(&attributes);
-    if (result != 0) return result;
+    if (result != 0) {
+        FFAppendHUDLog(@"SPAWN", [NSString stringWithFormat:@"posix_spawn failed | errno=%d | %@", result, strerror(result)]);
+        return result;
+    }
+    FFAppendHUDLog(@"SPAWN", [NSString stringWithFormat:@"posix_spawn success | child_pid=%d", child]);
 
     if (!detach) {
         int status = 0;
@@ -249,7 +333,8 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
             if (message) *message = [NSString stringWithFormat:@"Không khởi chạy được HUD (lỗi %d). Kiểm tra TrollStore và trạng thái jailbreak.", result];
             return NO;
         }
-        [NSThread sleepForTimeInterval:0.80];
+        FFAppendHUDLog(@"HUD_CONTROL", @"Enable HUD requested; waiting for hosted-window status");
+        [NSThread sleepForTimeInterval:2.00];
         BOOL running = FFHUDIsRunning();
         NSDictionary *status = FFReadHUDStatus();
         NSString *stage = status[@"stage"] ?: @"no_status";
@@ -263,6 +348,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
             running = FFHUDIsRunning();
         }
 
+        FFAppendHUDLog(@"HUD_CONTROL", [NSString stringWithFormat:@"enable result | running=%@ | hosted=%@ | stage=%@ | detail=%@", running ? @"YES" : @"NO", hosted ? @"YES" : @"NO", stage, detail]);
         if (message) {
             if (!running && !hosted) *message = [NSString stringWithFormat:@"HUD chưa đăng ký được cửa sổ (%@): %@", stage, detail];
             else if (!hosted) *message = @"HUD process đã thoát trước khi đăng ký cửa sổ. Mở lại app và kiểm tra log hệ thống.";
@@ -348,6 +434,8 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @property(nonatomic, strong) UISlider *fovOpacitySlider;
 @property(nonatomic, strong) UILabel *fovHintLabel;
 @property(nonatomic, strong) UILabel *fovOpacityLabel;
+@property(nonatomic, strong) UITextView *diagnosticLogView;
+@property(nonatomic, strong) UILabel *diagnosticLogStatusLabel;
 @property(nonatomic, strong) NSTimer *refreshTimer;
 @property(nonatomic, assign) NSInteger selectedTab;
 @end
@@ -424,8 +512,8 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     items.distribution = UIStackViewDistributionFillEqually;
     [bar addSubview:items];
 
-    NSArray *titles = @[@"Trang chủ", @"Game", @"Công cụ", @"Thông tin"];
-    NSArray *symbols = @[@"house.fill", @"gamecontroller.fill", @"wrench.and.screwdriver.fill", @"info.circle"];
+    NSArray *titles = @[@"Trang chủ", @"Game", @"Công cụ", @"Thông tin", @"Nhật ký"];
+    NSArray *symbols = @[@"house.fill", @"gamecontroller.fill", @"wrench.and.screwdriver.fill", @"info.circle", @"doc.text.magnifyingglass"];
     for (NSInteger i = 0; i < titles.count; i++) {
         UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
         button.tag = i;
@@ -467,6 +555,8 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     self.fovOpacitySlider = nil;
     self.fovHintLabel = nil;
     self.fovOpacityLabel = nil;
+    self.diagnosticLogView = nil;
+    self.diagnosticLogStatusLabel = nil;
 
     [self.contentStack addArrangedSubview:[self headerView]];
 
@@ -491,6 +581,11 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
             [self.contentStack addArrangedSubview:[self informationCard:@"Thông tin thiết bị" body:[NSString stringWithFormat:@"Thiết bị: %@\niOS: %@\nPin: %@ · %@\nTrạng thái nhiệt: %@\nRAM trống ước lượng: %lu MB\nThời gian hoạt động: %@",
                  UIDevice.currentDevice.model, UIDevice.currentDevice.systemVersion, FFBatteryText(), FFBatteryStateText(), FFThermalText(), (unsigned long)FFFreeRAMMB(), FFUptimeText()]]];
             [self.contentStack addArrangedSubview:[self informationCard:@"Giới hạn đo" body:@"Nhiệt là trạng thái áp lực nhiệt của iOS, không phải nhiệt độ vật lý °C. RAM trống là ước lượng từ số trang bộ nhớ hệ thống. App không ép xung hoặc giải phóng RAM của ứng dụng khác."]];
+            break;
+        case 4:
+            [self.contentStack addArrangedSubview:[self sectionHeading:@"CHẨN ĐOÁN HUD" subtitle:@"Nhật ký chạy trực tiếp"]];
+            [self.contentStack addArrangedSubview:[self diagnosticLogCard]];
+            [self.contentStack addArrangedSubview:[self informationCard:@"Cách lấy log" body:@"Bật HUD, mở Free Fire, chờ vài giây rồi vào Nhật ký và bấm Sao chép. Gửi toàn bộ nội dung cho nhà phát triển để xác định lỗi bundle ID, system window hoặc vòng lặp hiển thị."]];
             break;
         default:
             [self.contentStack addArrangedSubview:[self systemStatusCard]];
@@ -944,6 +1039,95 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     return card;
 }
 
+- (UIView *)diagnosticLogCard {
+    UIView *card = [[UIView alloc] initWithFrame:CGRectZero];
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    FFStyleCard(card, 18);
+
+    UILabel *status = FFLabel(@"Trạng thái: đang đọc...", 10, UIFontWeightSemibold, FFColor(0.26, 0.91, 0.68, 1));
+    self.diagnosticLogStatusLabel = status;
+
+    UITextView *logView = [[UITextView alloc] initWithFrame:CGRectZero];
+    logView.translatesAutoresizingMaskIntoConstraints = NO;
+    logView.editable = NO;
+    logView.selectable = YES;
+    logView.scrollEnabled = YES;
+    logView.backgroundColor = FFColor(0.012, 0.008, 0.035, 0.96);
+    logView.textColor = FFColor(0.78, 0.91, 1.0, 1);
+    logView.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
+    logView.layer.cornerRadius = 11;
+    logView.layer.borderWidth = 0.7;
+    logView.layer.borderColor = FFColor(0.49, 0.28, 0.78, 0.55).CGColor;
+    logView.text = FFReadHUDLogTail(80);
+    self.diagnosticLogView = logView;
+
+    UIButton *refresh = [self actionButton:@"Làm mới" symbol:@"arrow.clockwise" action:@selector(refreshDiagnosticLog)];
+    UIButton *copy = [self actionButton:@"Sao chép" symbol:@"doc.on.doc" action:@selector(copyDiagnosticLog)];
+    UIButton *clear = [self actionButton:@"Xoá log" symbol:@"trash" action:@selector(confirmClearDiagnosticLog)];
+    UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[refresh, copy, clear]];
+    actions.translatesAutoresizingMaskIntoConstraints = NO;
+    actions.axis = UILayoutConstraintAxisHorizontal;
+    actions.distribution = UIStackViewDistributionFillEqually;
+    actions.spacing = 6;
+
+    UIStackView *body = [[UIStackView alloc] initWithArrangedSubviews:@[status, logView, actions]];
+    body.translatesAutoresizingMaskIntoConstraints = NO;
+    body.axis = UILayoutConstraintAxisVertical;
+    body.spacing = 10;
+    [card addSubview:body];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [body.topAnchor constraintEqualToAnchor:card.topAnchor constant:13],
+        [body.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:12],
+        [body.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-12],
+        [body.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-13],
+        [logView.heightAnchor constraintEqualToConstant:250],
+        [actions.heightAnchor constraintEqualToConstant:44]
+    ]];
+    [self refreshDiagnosticLog];
+    return card;
+}
+
+- (void)refreshDiagnosticLog {
+    if (!self.diagnosticLogView && !self.diagnosticLogStatusLabel) return;
+
+    NSDictionary *status = FFReadHUDStatus();
+    NSString *stage = status[@"stage"] ?: @"chưa có trạng thái";
+    NSString *bundleID = FFCurrentFrontmostBundleID();
+    self.diagnosticLogStatusLabel.text = [NSString stringWithFormat:@"HUD: %@  ·  App trước: %@", stage, bundleID];
+    self.diagnosticLogView.text = FFReadHUDLogTail(80);
+    if (self.diagnosticLogView.text.length) {
+        [self.diagnosticLogView scrollRangeToVisible:NSMakeRange(self.diagnosticLogView.text.length - 1, 1)];
+    }
+}
+
+- (void)copyDiagnosticLog {
+    NSString *log = FFReadHUDLogTail(1000);
+    NSDictionary *status = FFReadHUDStatus();
+    NSString *bundleID = FFCurrentFrontmostBundleID();
+    NSString *payload = [NSString stringWithFormat:@"FF TOOL DIAGNOSTICS\nHUD stage: %@\nHUD detail: %@\nFrontmost bundle: %@\n\n%@",
+                         status[@"stage"] ?: @"unknown",
+                         status[@"detail"] ?: @"",
+                         bundleID,
+                         log];
+    UIPasteboard.generalPasteboard.string = payload;
+    FFAppendHUDLog(@"DASHBOARD", @"User copied diagnostic log to clipboard");
+    if (self.diagnosticLogStatusLabel) self.diagnosticLogStatusLabel.text = @"Đã sao chép log vào clipboard.";
+    [self refreshDiagnosticLog];
+}
+
+- (void)confirmClearDiagnosticLog {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Xoá nhật ký?"
+                                                                   message:@"Log hiện tại sẽ bị xoá. Lần bật HUD tiếp theo sẽ tạo log mới."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Huỷ" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Xoá" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+        FFClearHUDLog();
+        [self refreshDiagnosticLog];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (UIView *)informationCard:(NSString *)title body:(NSString *)bodyText {
     UIView *card = [[UIView alloc] initWithFrame:CGRectZero];
     card.translatesAutoresizingMaskIntoConstraints = NO;
@@ -986,6 +1170,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 }
 
 - (void)hudSwitchChanged:(UISwitch *)sender {
+    FFAppendHUDLog(@"HUD_CONTROL", [NSString stringWithFormat:@"HUD switch changed | enabled=%@", sender.isOn ? @"YES" : @"NO"]);
     NSString *message = nil;
     BOOL ok = FFHUDSetEnabled(sender.isOn, &message);
     if (!ok) sender.on = NO;
@@ -995,6 +1180,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 
 - (void)hudActionPressed {
     BOOL enabled = !FFHUDIsRunning();
+    FFAppendHUDLog(@"HUD_CONTROL", [NSString stringWithFormat:@"HUD action button | enable=%@", enabled ? @"YES" : @"NO"]);
     NSString *message = nil;
     BOOL ok = FFHUDSetEnabled(enabled, &message);
     if (self.hudHintLabel) self.hudHintLabel.text = message;
@@ -1027,6 +1213,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     if (self.metricLabels[@"memory"]) self.metricLabels[@"memory"].text = [NSString stringWithFormat:@"%lu MB",(unsigned long)FFFreeRAMMB()];
     if (self.metricLabels[@"uptime"]) self.metricLabels[@"uptime"].text = FFUptimeText();
     [self updateHUDControls];
+    if (self.selectedTab == 4) [self refreshDiagnosticLog];
 }
 
 @end
@@ -1227,6 +1414,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @implementation FFHUDViewController
 - (void)viewDidLoad {
     [super viewDidLoad];
+    FFAppendHUDLog(@"HUD_VIEW", [NSString stringWithFormat:@"viewDidLoad | screen_bounds=%@", NSStringFromCGRect(UIScreen.mainScreen.bounds)]);
     self.view.backgroundColor = UIColor.clearColor;
     self.view.opaque = NO;
     CGRect bounds = UIScreen.mainScreen.bounds;
@@ -1250,13 +1438,48 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 }
 
 - (void)refreshHUD {
-    BOOL inFreeFire = FFIsFreeFireForeground();
+    NSString *bundleID = FFCurrentFrontmostBundleID();
+    BOOL inFreeFire = [FFGameBundleIDs() containsObject:bundleID];
+    static BOOL hasLoggedForeground = NO;
+    static BOOL lastForeground = NO;
+    if (!hasLoggedForeground || lastForeground != inFreeFire) {
+        FFAppendHUDLog(@"VISIBILITY", [NSString stringWithFormat:@"foreground_match=%@ | bundle_id=%@ | panel_hidden=%@ | ring_hidden=%@",
+                                       inFreeFire ? @"YES" : @"NO",
+                                       bundleID,
+                                       inFreeFire ? @"NO" : @"YES",
+                                       inFreeFire ? @"NO" : @"YES"]);
+        hasLoggedForeground = YES;
+        lastForeground = inFreeFire;
+    }
+
+    NSDictionary *settings = FFLoadHUDSettings();
+    BOOL fovEnabled = [settings[@"fovEnabled"] boolValue];
+    static BOOL hasLoggedFOV = NO;
+    static BOOL lastFOVEnabled = NO;
+    if (!hasLoggedFOV || lastFOVEnabled != fovEnabled) {
+        FFAppendHUDLog(@"FOV", [NSString stringWithFormat:@"enabled=%@ | diameter=%@ | color_index=%@ | opacity=%@",
+                                fovEnabled ? @"YES" : @"NO",
+                                settings[@"fovDiameter"] ?: @"?",
+                                settings[@"fovColor"] ?: @"?",
+                                settings[@"fovOpacity"] ?: @"?"]);
+        hasLoggedFOV = YES;
+        lastFOVEnabled = fovEnabled;
+    }
+
     self.panel.hidden = !inFreeFire;
-    self.ring.hidden = !inFreeFire;
+    self.ring.hidden = !inFreeFire || !fovEnabled;
     if (!inFreeFire) return;
 
     [self.panel refreshMetrics];
-    [self.ring applySettings:FFLoadHUDSettings()];
+    [self.ring applySettings:settings];
+    static BOOL hasLoggedVisibleOnce = NO;
+    if (!hasLoggedVisibleOnce) {
+        FFAppendHUDLog(@"RENDER", [NSString stringWithFormat:@"HUD content visible | view_bounds=%@ | panel_frame=%@ | ring_bounds=%@",
+                                   NSStringFromCGRect(self.view.bounds),
+                                   NSStringFromCGRect(self.panel.frame),
+                                   NSStringFromCGRect(self.ring.bounds)]);
+        hasLoggedVisibleOnce = YES;
+    }
 }
 @end
 
@@ -1266,6 +1489,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     FFWriteHUDStatus(@"delegate_started", @"HUD app delegate started");
+    FFAppendHUDLog(@"APP_DELEGATE", [NSString stringWithFormat:@"delegate=%@ | principal_class=%@", NSStringFromClass(self.class), NSStringFromClass(UIApplication.sharedApplication.class)]);
 
     self.window = [[FFHUDWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     FFHUDViewController *controller = [[FFHUDViewController alloc] init];
@@ -1278,9 +1502,11 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     [self.window setHidden:NO];
     [self.window makeKeyAndVisible];
     FFWriteHUDStatus(@"window_created", @"HUD UIWindow created and made visible");
+    FFAppendHUDLog(@"WINDOW", [NSString stringWithFormat:@"class=%@ | frame=%@ | level=%.2f | hidden=%@ | key=%@", NSStringFromClass(self.window.class), NSStringFromCGRect(self.window.frame), self.window.windowLevel, self.window.hidden ? @"YES" : @"NO", self.window.isKeyWindow ? @"YES" : @"NO"]);
 
     Class hostClass = NSClassFromString(@"SBSAccessibilityWindowHostingController");
     if (!hostClass) {
+        FFAppendHUDLog(@"HOST", @"SBSAccessibilityWindowHostingController class lookup returned nil");
         FFWriteHUDStatus(@"host_class_missing", @"SBSAccessibilityWindowHostingController was not found");
         return YES;
     }
@@ -1288,15 +1514,18 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     // Retain the host controller for the full lifetime of the HUD delegate.
     // TrollSpeed uses the same lifetime model through its _windowHostingController ivar.
     _windowHostingController = [[hostClass alloc] init];
+    FFAppendHUDLog(@"HOST", [NSString stringWithFormat:@"host class=%@ | instance=%@", NSStringFromClass(hostClass), _windowHostingController]);
 
     SEL registerSelector = NSSelectorFromString(@"registerWindowWithContextID:atLevel:");
     if (![_windowHostingController respondsToSelector:registerSelector]) {
+        FFAppendHUDLog(@"HOST", [NSString stringWithFormat:@"selector missing: %@", NSStringFromSelector(registerSelector)]);
         FFWriteHUDStatus(@"register_selector_missing", @"Window host registration selector is unavailable");
         return YES;
     }
 
     unsigned int contextID = [self.window _contextId];
     double windowLevel = self.window.windowLevel;
+    FFAppendHUDLog(@"HOST", [NSString stringWithFormat:@"context_id=%u | level=%.2f", contextID, windowLevel]);
     if (contextID == 0) {
         FFWriteHUDStatus(@"window_context_missing", @"UIWindow returned an empty context ID");
         return YES;
@@ -1313,9 +1542,17 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     [invocation setSelector:registerSelector];
     [invocation setArgument:&contextID atIndex:2];
     [invocation setArgument:&windowLevel atIndex:3];
-    [invocation invoke];
+    @try {
+        [invocation invoke];
+    } @catch (NSException *exception) {
+        NSString *reason = [NSString stringWithFormat:@"registration exception | name=%@ | reason=%@", exception.name ?: @"unknown", exception.reason ?: @"(none)"];
+        FFAppendHUDLog(@"HOST_EXCEPTION", reason);
+        FFWriteHUDStatus(@"registration_exception", reason);
+        return YES;
+    }
 
-    FFWriteHUDStatus(@"window_hosted", @"HUD window registered with SBSAccessibilityWindowHostingController");
+    FFAppendHUDLog(@"HOST", @"registerWindowWithContextID:atLevel: invocation returned without Objective-C exception; private API does not expose a success result");
+    FFWriteHUDStatus(@"window_hosted", @"HUD window registration call returned without Objective-C exception");
 
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -1334,6 +1571,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 
 static int FFRunHUDProcess(void) {
     FFWriteHUDStatus(@"initializing", @"Starting system HUD application");
+    FFAppendHUDLog(@"BOOT", [NSString stringWithFormat:@"iOS=%@ | executable=%@ | uid=%d | euid=%d", UIDevice.currentDevice.systemVersion, FFExecutablePath() ?: @"unknown", getuid(), geteuid()]);
     [UIScreen initialize];
     CFRunLoopGetCurrent();
 
@@ -1367,12 +1605,14 @@ static int FFStartHUDMode(void) {
         NSString *pid = [NSString stringWithFormat:@"%d", getpid()];
         [pid writeToFile:kFFHUDPIDPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
         FFWriteHUDStatus(@"process_started", @"HUD child process started");
+        FFAppendHUDLog(@"BOOT", [NSString stringWithFormat:@"HUD child process started | pid=%d", getpid()]);
         UIDevice.currentDevice.batteryMonitoringEnabled = YES;
         return FFRunHUDProcess();
     }
 }
 
 static int FFStopHUDMode(void) {
+    FFAppendHUDLog(@"STOP", @"HUD stop requested");
     NSString *pidString = [NSString stringWithContentsOfFile:kFFHUDPIDPath encoding:NSUTF8StringEncoding error:nil];
     pid_t pid = (pid_t)pidString.intValue;
     if (pid > 0 && pid != getpid()) kill(pid, SIGTERM);
