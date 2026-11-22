@@ -6,43 +6,49 @@ import CoreFoundation
 
 struct DashboardView: View {
     @State private var snapshot = DeviceSnapshot.capture()
-    @State private var showingAbout = false
+    @State private var selectedTab = 0
     @State private var isLiveActivityActive = false
-    @AppStorage("devicescope.systemHUD.enabled") private var isSystemHUDEnabled = false
-    @State private var systemHUDMessage = "Bật HUD nổi ở SpringBoard để xem trạng thái thiết bị khi đang dùng ứng dụng khác."
-    @State private var liveActivityMessage = "Nhấn Bật trước khi mở game. Dynamic Island hiển thị lần đọc gần nhất; iOS có thể tạm dừng cập nhật khi game ở foreground."
+    @State private var liveActivityMessage = "Live Activity hiển thị snapshot gần nhất trên Dynamic Island."
     @State private var lastLiveActivityUpdate = Date.distantPast
+    @State private var systemHUDMessage = "Bật HUD một lần, sau đó chuyển sang Free Fire để xem trạng thái thiết bị."
+    @AppStorage("devicescope.systemHUD.enabled") private var isSystemHUDEnabled = false
+
     private let refreshTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+    private let accent = Color(red: 0.66, green: 0.20, blue: 1.0)
+    private let accentBlue = Color(red: 0.29, green: 0.20, blue: 1.0)
+    private let canvas = Color(red: 0.025, green: 0.018, blue: 0.075)
 
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(red: 0.035, green: 0.055, blue: 0.10), Color(red: 0.055, green: 0.08, blue: 0.14), Color(red: 0.025, green: 0.035, blue: 0.07)],
+                colors: [Color(red: 0.045, green: 0.018, blue: 0.13), canvas, Color(red: 0.018, green: 0.012, blue: 0.055)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
-            ).ignoresSafeArea()
+            )
+            .ignoresSafeArea()
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
-                    header
-                    deviceCard
-                    liveActivityCard
-                    systemHUDCard
-                    thermalCard
-                    metricsGrid
-                    footer
+            VStack(spacing: 0) {
+                Group {
+                    switch selectedTab {
+                    case 1: gamePage
+                    case 2: toolsPage
+                    case 3: infoPage
+                    default: homePage
+                    }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 14)
-                .padding(.bottom, 30)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                bottomBar
             }
         }
-        .sheet(isPresented: $showingAbout) { aboutSheet }
+        .preferredColorScheme(.dark)
         .onAppear {
             UIDevice.current.isBatteryMonitoringEnabled = true
             snapshot = DeviceSnapshot.capture()
             refreshLiveActivityStatus()
-            if isSystemHUDEnabled { postSystemHUDCommand("show") }
+            if isSystemHUDEnabled {
+                postSystemHUDCommand("show")
+            }
         }
         .onReceive(refreshTimer) { _ in
             snapshot = DeviceSnapshot.capture()
@@ -50,190 +56,421 @@ struct DashboardView: View {
         }
     }
 
+    private var homePage: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 17) {
+                header
+                systemStatusCard
+                hudControlCard
+                deviceMetricsSection
+                footerNote
+            }
+            .padding(.horizontal, 17)
+            .padding(.top, 12)
+            .padding(.bottom, 22)
+        }
+    }
+
+    private var gamePage: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 17) {
+                header
+                sectionHeading("CHẾ ĐỘ KHI CHƠI", subtitle: "Bảng trạng thái nổi dành cho lúc chơi game")
+                hudControlCard
+                panel {
+                    HStack(spacing: 12) {
+                        iconTile("gamecontroller.fill", tint: .purple)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Không can thiệp Free Fire")
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                            Text("HUD được vẽ bởi SpringBoard. Tweak không đọc bộ nhớ, dữ liệu trận đấu hoặc thay đổi tiến trình game.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.60))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                panel {
+                    Label("Không có ESP hoặc dữ liệu người chơi", systemImage: "shield.lefthalf.filled")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Color.green)
+                    Text("Chỉ số được phép hiển thị: pin, mức nhiệt hệ thống, RAM ước lượng và thời gian hoạt động.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.58))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 17)
+            .padding(.top, 12)
+            .padding(.bottom, 22)
+        }
+    }
+
+    private var toolsPage: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 17) {
+                header
+                sectionHeading("CÔNG CỤ", subtitle: "Điều khiển HUD và làm mới trạng thái")
+                hudControlCard
+                panel {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Dynamic Island")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(.white)
+                            Text("Live Activity trên iPhone hỗ trợ")
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.55))
+                        }
+                        Spacer()
+                        Button(action: toggleLiveActivity) {
+                            Text(isLiveActivityActive ? "Tắt" : "Bật")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 17)
+                                .padding(.vertical, 10)
+                                .background(isLiveActivityActive ? Color.red.opacity(0.25) : accent.opacity(0.32), in: Capsule())
+                        }
+                    }
+                    Text(liveActivityMessage)
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.47))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button(action: refreshSnapshot) {
+                    Label("Làm mới chỉ số thiết bị", systemImage: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 15)
+                        .background(LinearGradient(colors: [accent, accentBlue], startPoint: .leading, endPoint: .trailing), in: RoundedRectangle(cornerRadius: 16))
+                }
+            }
+            .padding(.horizontal, 17)
+            .padding(.top, 12)
+            .padding(.bottom, 22)
+        }
+    }
+
+    private var infoPage: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 17) {
+                header
+                sectionHeading("THÔNG TIN", subtitle: "FF Tool · Device Status Companion")
+                panel {
+                    Label("Thông tin thiết bị", systemImage: "iphone.gen3")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                    infoRow("Thiết bị", value: snapshot.model)
+                    infoRow("Phiên bản", value: snapshot.systemVersion)
+                    infoRow("Nguồn", value: snapshot.isLowPowerMode ? "Chế độ nguồn thấp bật" : "Chế độ nguồn thấp tắt")
+                    infoRow("Pin", value: snapshot.batteryLevel.map { "\($0)% · \(snapshot.batteryState)" } ?? "Không khả dụng")
+                }
+                panel {
+                    Label("Giới hạn minh bạch", systemImage: "info.circle")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                    Text("Nhiệt là mức áp lực nhiệt iOS báo cáo, không phải nhiệt độ °C. RAM trong app là bộ nhớ riêng của FF Tool; HUD hệ thống hiển thị ước lượng RAM trống từ số trang bộ nhớ.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Divider().overlay(Color.white.opacity(0.08))
+                    Text("Ứng dụng không ép xung CPU, không giải phóng RAM của app khác, không đọc hoặc sửa bộ nhớ Free Fire và không ẩn jailbreak.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("FF Tool · DeviceScope")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.30))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 6)
+            }
+            .padding(.horizontal, 17)
+            .padding(.top, 12)
+            .padding(.bottom, 22)
+        }
+    }
+
     private var header: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("DEVICESCOPE")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    
-                    .foregroundStyle(Color.cyan.opacity(0.9))
-                Text("Tổng quan thiết bị")
-                    .font(.system(size: 27, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(LinearGradient(colors: [accent, accentBlue, Color(red: 0.18, green: 0.06, blue: 0.48)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                Image(systemName: "bolt.shield.fill")
+                    .font(.system(size: 25, weight: .black))
+                    .foregroundColor(.white)
+                    .shadow(color: .white.opacity(0.35), radius: 7)
+            }
+            .frame(width: 52, height: 52)
+            .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.purple.opacity(0.75), lineWidth: 1))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("FF Tool")
+                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white)
+                Text("Free Fire Helper")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Color(red: 0.72, green: 0.63, blue: 1.0))
             }
             Spacer()
-            Button {
-                snapshot = DeviceSnapshot.capture()
-                updateLiveActivity(force: true)
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
+            Button(action: { selectedTab = 3 }) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(accent)
                     .frame(width: 44, height: 44)
-                    .background(.white.opacity(0.08), in: Circle())
-                    .overlay(Circle().stroke(.white.opacity(0.10), lineWidth: 1))
+                    .background(Color.purple.opacity(0.12), in: Circle())
             }
-            .accessibilityLabel("Làm mới dữ liệu")
+            .accessibilityLabel("Thông tin và cài đặt")
         }
+        .padding(.bottom, 2)
     }
 
-    private var deviceCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Label("THIẾT BỊ", systemImage: "iphone.gen3")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    
-                    .foregroundStyle(.white.opacity(0.55))
-                Spacer()
-                Text("LIVE")
-                    .font(.system(size: 9, weight: .heavy, design: .rounded))
-                    
-                    .foregroundStyle(Color.green)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(Color.green.opacity(0.12), in: Capsule())
-            }
-            HStack(alignment: .center, spacing: 16) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(LinearGradient(colors: [Color.cyan.opacity(0.24), Color.blue.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 76, height: 88)
-                    Image(systemName: "iphone.gen3")
-                        .font(.system(size: 38, weight: .light))
-                        .foregroundStyle(Color.cyan)
+    private var systemStatusCard: some View {
+        let isHot = snapshot.thermalState == .serious || snapshot.thermalState == .critical
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 7) {
+                    Circle().fill(isHot ? Color.orange : Color.green).frame(width: 9, height: 9)
+                    Text("Trạng thái hệ thống")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.78))
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(snapshot.deviceName)
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                    Text(snapshot.model)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.58))
-                    Text(snapshot.systemVersion)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Color.cyan.opacity(0.9))
-                }
-                Spacer(minLength: 0)
+                Text(isHot ? "Đang nóng" : "Hoạt động tốt")
+                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .foregroundColor(isHot ? Color.orange : Color.green)
+                Text(isHot ? snapshot.thermalState.detail : "Thiết bị đang hoạt động ổn định.")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.white.opacity(0.64))
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Divider().overlay(.white.opacity(0.10))
-            HStack {
-                Label("Chế độ nguồn thấp", systemImage: "battery.25percent")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.72))
-                Spacer()
-                Text(snapshot.isLowPowerMode ? "Đang bật" : "Đang tắt")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(snapshot.isLowPowerMode ? Color.orange : Color.green)
+            Spacer(minLength: 0)
+            ZStack {
+                Circle().stroke((isHot ? Color.orange : Color.green).opacity(0.30), lineWidth: 4).frame(width: 56, height: 56)
+                Image(systemName: isHot ? "thermometer.high" : "checkmark")
+                    .font(.system(size: 27, weight: .bold))
+                    .foregroundColor(isHot ? .orange : .green)
             }
         }
-        .padding(18)
-        .background(cardBackground)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(colors: [Color.green.opacity(0.09), Color(red: 0.035, green: 0.10, blue: 0.12)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke((isHot ? Color.orange : Color.green).opacity(0.42), lineWidth: 1))
     }
 
-
-    private var liveActivityCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var hudControlCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
             HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(Color.cyan.opacity(0.14))
-                        .frame(width: 46, height: 46)
-                    Image(systemName: "iphone.gen3.radiowaves.left.and.right")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(Color.cyan)
-                }
+                iconTile("scope", tint: accent)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("DYNAMIC ISLAND")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.52))
-                    Text(isLiveActivityActive ? "Đang hiển thị trạng thái" : "Hiện trạng thái khi chơi game")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
+                    Text("HUD trạng thái thiết bị")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text(isSystemHUDEnabled ? "HUD đã được bật" : "Hiển thị trên màn hình khi chơi")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.58))
                 }
                 Spacer(minLength: 4)
-                Button(action: toggleLiveActivity) {
-                    HStack(spacing: 6) {
-                        Image(systemName: isLiveActivityActive ? "stop.fill" : "play.fill")
-                            .font(.system(size: 10, weight: .bold))
-                        Text(isLiveActivityActive ? "Tắt" : "Bật")
-                            .font(.system(size: 12, weight: .bold))
+                Toggle("HUD", isOn: Binding(
+                    get: { isSystemHUDEnabled },
+                    set: { enabled in
+                        isSystemHUDEnabled = enabled
+                        postSystemHUDCommand(enabled ? "show" : "hide")
+                        systemHUDMessage = enabled ? "Đã gửi lệnh bật HUD đến SpringBoard." : "HUD nổi đã được yêu cầu tắt."
                     }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(
-                        isLiveActivityActive ? Color.red.opacity(0.22) : Color.cyan.opacity(0.20),
-                        in: Capsule()
-                    )
-                    .overlay(
-                        Capsule().stroke(
-                            isLiveActivityActive ? Color.red.opacity(0.35) : Color.cyan.opacity(0.35),
-                            lineWidth: 1
-                        )
-                    )
-                }
-                .accessibilityLabel(isLiveActivityActive ? "Tắt trạng thái Dynamic Island" : "Bật trạng thái Dynamic Island")
+                ))
+                .labelsHidden()
+                .tint(accent)
+                .scaleEffect(0.92)
             }
-            Text(liveActivityMessage)
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.46))
-                .fixedSize(horizontal: false, vertical: true)
+
+            Button(action: toggleSystemHUD) {
+                HStack(spacing: 10) {
+                    Image(systemName: isSystemHUDEnabled ? "stop.fill" : "play.fill")
+                        .font(.system(size: 14, weight: .heavy))
+                    Text(isSystemHUDEnabled ? "Tắt HUD nổi" : "Bật HUD trên màn hình")
+                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 17)
+                .background(
+                    LinearGradient(colors: isSystemHUDEnabled ? [Color(red: 0.43, green: 0.08, blue: 0.72), Color(red: 0.25, green: 0.08, blue: 0.52)] : [accent, accentBlue], startPoint: .leading, endPoint: .trailing),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                )
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.purple.opacity(0.72), lineWidth: 1))
+                .shadow(color: accent.opacity(0.20), radius: 12, y: 4)
+            }
+
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(Color.purple.opacity(0.95))
+                Text(systemHUDMessage + " HUD chỉ đọc thông số thiết bị; không hiển thị ESP hoặc dữ liệu trận đấu.")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(Color(red: 0.79, green: 0.72, blue: 1.0))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .background(Color.purple.opacity(0.13), in: RoundedRectangle(cornerRadius: 13))
         }
-        .padding(16)
-        .background(cardBackground)
+        .padding(15)
+        .background(panelBackground)
     }
 
-
-    private var systemHUDCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(Color.purple.opacity(0.16))
-                        .frame(width: 46, height: 46)
-                    Image(systemName: "rectangle.inset.filled")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(Color.purple.opacity(0.95))
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("HUD NỔI TOÀN HỆ THỐNG")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.52))
-                    Text(isSystemHUDEnabled ? "Đã gửi lệnh bật HUD" : "Hiển thị trên màn hình ứng dụng khác")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                Spacer(minLength: 4)
-                Button(action: toggleSystemHUD) {
-                    Text(isSystemHUDEnabled ? "Tắt" : "Bật")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            isSystemHUDEnabled ? Color.red.opacity(0.22) : Color.purple.opacity(0.24),
-                            in: Capsule()
-                        )
-                        .overlay(
-                            Capsule().stroke(
-                                isSystemHUDEnabled ? Color.red.opacity(0.38) : Color.purple.opacity(0.42),
-                                lineWidth: 1
-                            )
-                        )
+    private var deviceMetricsSection: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack {
+                Label("Trạng Thái Máy", systemImage: "chart.bar.fill")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                Spacer()
+                HStack(spacing: 5) {
+                    Circle().fill(Color.green).frame(width: 7, height: 7)
+                    Text("Đang cập nhật")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Color.green)
                 }
             }
-            Text(systemHUDMessage)
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.48))
-                .fixedSize(horizontal: false, vertical: true)
-            Text("HUD chỉ đọc pin, trạng thái nhiệt, RAM trống ước lượng và uptime. Tweak chỉ chạy trong SpringBoard, không hook tiến trình Free Fire.")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.36))
-                .fixedSize(horizontal: false, vertical: true)
+
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)], spacing: 9) {
+                metricTile(title: "Pin", value: snapshot.batteryLevel.map { "\($0)%" } ?? "N/A", detail: snapshot.batteryState, icon: "battery.100percent", tint: .green)
+                metricTile(title: "Nhiệt hệ thống", value: snapshot.thermalState.displayName, detail: "Mức iOS báo cáo", icon: "thermometer.medium", tint: .cyan)
+                metricTile(title: "RAM app", value: snapshot.appMemoryMB.map { String(format: "%.1f MB", $0) } ?? "N/A", detail: "FF Tool đang dùng", icon: "memorychip", tint: .mint)
+                metricTile(title: "Thời gian hoạt động", value: formatUptime(snapshot.uptime), detail: "Từ lần khởi động gần nhất", icon: "clock", tint: .blue)
+            }
         }
-        .padding(16)
-        .background(cardBackground)
+        .padding(15)
+        .background(panelBackground)
+    }
+
+    private var footerNote: some View {
+        Text("FF Tool đọc các chỉ số iOS cho phép. Nhiệt không phải số đo °C; RAM app không phải tổng RAM của iPhone.")
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(.white.opacity(0.36))
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+    }
+
+    private var bottomBar: some View {
+        HStack(spacing: 0) {
+            tabButton("Trang chủ", icon: "house.fill", tag: 0)
+            tabButton("Game", icon: "gamecontroller.fill", tag: 1)
+            tabButton("Công cụ", icon: "wrench.and.screwdriver.fill", tag: 2)
+            tabButton("Thông tin", icon: "info.circle", tag: 3)
+        }
+        .padding(.top, 9)
+        .padding(.bottom, 5)
+        .background(Color.black.opacity(0.76))
+        .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1) }
+    }
+
+    private func tabButton(_ title: String, icon: String, tag: Int) -> some View {
+        Button { selectedTab = tag } label: {
+            VStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 9, weight: .medium))
+            }
+            .foregroundColor(selectedTab == tag ? accent : Color.white.opacity(0.48))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 2)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func sectionHeading(_ title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                .tracking(1.0)
+                .foregroundColor(accent)
+            Text(subtitle)
+                .font(.system(size: 19, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+        }
+    }
+
+    private func panel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12, content: content)
+            .padding(15)
+            .background(panelBackground)
+    }
+
+    private var panelBackground: some View {
+        RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .fill(Color(red: 0.075, green: 0.045, blue: 0.15).opacity(0.92))
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.purple.opacity(0.34), lineWidth: 1))
+    }
+
+    private func iconTile(_ symbol: String, tint: Color) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(tint.opacity(0.14))
+                .frame(width: 58, height: 58)
+            Image(systemName: symbol)
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundColor(tint)
+        }
+    }
+
+    private func metricTile(title: String, value: String, detail: String, icon: String, tint: Color) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 30)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.white.opacity(0.56))
+                    .lineLimit(1)
+                Text(value)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text(detail)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(.white.opacity(0.38))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
+        .background(Color(red: 0.12, green: 0.075, blue: 0.22).opacity(0.92), in: RoundedRectangle(cornerRadius: 15))
+        .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.045), lineWidth: 1))
+    }
+
+    private func infoRow(_ title: String, value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(title).foregroundColor(.white.opacity(0.50))
+            Spacer()
+            Text(value).foregroundColor(.white).multilineTextAlignment(.trailing)
+        }
+        .font(.system(size: 11, weight: .medium))
+    }
+
+    private func refreshSnapshot() {
+        snapshot = DeviceSnapshot.capture()
+        updateLiveActivity(force: true)
+    }
+
+    private func toggleSystemHUD() {
+        let next = !isSystemHUDEnabled
+        isSystemHUDEnabled = next
+        postSystemHUDCommand(next ? "show" : "hide")
+        systemHUDMessage = next
+            ? "Đã gửi lệnh bật đến SpringBoard. Khi HUD hiện, chuyển sang Free Fire."
+            : "Đã gửi lệnh tắt HUD nổi."
     }
 
     private func postSystemHUDCommand(_ command: String) {
@@ -245,15 +482,6 @@ struct DashboardView: View {
             nil,
             true
         )
-    }
-
-    private func toggleSystemHUD() {
-        let next = !isSystemHUDEnabled
-        isSystemHUDEnabled = next
-        postSystemHUDCommand(next ? "show" : "hide")
-        systemHUDMessage = next
-            ? "Đã gửi lệnh bật. Cần cài DeviceScopeHUD.deb và respring SpringBoard để HUD xuất hiện."
-            : "Đã gửi lệnh tắt HUD nổi."
     }
 
     @available(iOS 16.1, *)
@@ -274,7 +502,7 @@ struct DashboardView: View {
         }
         isLiveActivityActive = !Activity<DeviceScopeActivityAttributes>.activities.isEmpty
         if isLiveActivityActive {
-            liveActivityMessage = "Đang chạy. Nội dung là lần đọc gần nhất; mở lại DeviceScope để làm mới số liệu."
+            liveActivityMessage = "Đang chạy. Nội dung là snapshot gần nhất."
         }
     }
 
@@ -287,12 +515,10 @@ struct DashboardView: View {
         let activeActivities = Activity<DeviceScopeActivityAttributes>.activities
         if !activeActivities.isEmpty {
             for activity in activeActivities {
-                Task {
-                    await activity.end(using: nil, dismissalPolicy: .immediate)
-                }
+                Task { await activity.end(using: nil, dismissalPolicy: .immediate) }
             }
             isLiveActivityActive = false
-            liveActivityMessage = "Đã tắt trạng thái trên Dynamic Island."
+            liveActivityMessage = "Đã tắt Live Activity."
             return
         }
 
@@ -304,20 +530,16 @@ struct DashboardView: View {
 
         let attributes = DeviceScopeActivityAttributes(deviceModel: snapshot.model)
         let state = makeLiveActivityState()
-
         do {
             if #available(iOS 16.2, *) {
-                let content = ActivityContent(
-                    state: state,
-                    staleDate: Date().addingTimeInterval(120)
-                )
+                let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(120))
                 _ = try Activity.request(attributes: attributes, content: content, pushType: nil)
             } else {
                 _ = try Activity.request(attributes: attributes, contentState: state, pushType: nil)
             }
             isLiveActivityActive = true
             lastLiveActivityUpdate = Date()
-            liveActivityMessage = "Đã bật. Mở game để xem chỉ số trên Dynamic Island; số liệu sẽ là lần đọc gần nhất của ứng dụng."
+            liveActivityMessage = "Đã bật. Dynamic Island hiển thị snapshot gần nhất."
         } catch {
             isLiveActivityActive = false
             liveActivityMessage = "Không bật được Live Activity: \(error.localizedDescription)"
@@ -337,133 +559,12 @@ struct DashboardView: View {
         for activity in activities {
             Task {
                 if #available(iOS 16.2, *) {
-                    let content = ActivityContent(
-                        state: state,
-                        staleDate: Date().addingTimeInterval(120)
-                    )
+                    let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(120))
                     await activity.update(content)
                 } else {
                     await activity.update(using: state)
                 }
             }
-        }
-    }
-
-    private var thermalCard: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle().fill(thermalColor.opacity(0.14)).frame(width: 48, height: 48)
-                Image(systemName: "thermometer.medium")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(thermalColor)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("TÌNH TRẠNG NHIỆT")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    
-                    .foregroundStyle(.white.opacity(0.5))
-                Text(snapshot.thermalState.displayName)
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                Text(snapshot.thermalState.detail)
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.58))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .background(cardBackground)
-    }
-
-    private var metricsGrid: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("CHỈ SỐ ĐANG ĐỌC")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                
-                .foregroundStyle(.white.opacity(0.48))
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                MetricCard(
-                    title: "PIN",
-                    value: snapshot.batteryLevel.map { "\($0)%" } ?? "N/A",
-                    detail: snapshot.batteryState,
-                    icon: "battery.100percent",
-                    tint: .green
-                )
-                MetricCard(
-                    title: "RAM ỨNG DỤNG",
-                    value: snapshot.appMemoryMB.map { String(format: "%.1f MB", $0) } ?? "N/A",
-                    detail: "Bộ nhớ riêng của DeviceScope",
-                    icon: "memorychip",
-                    tint: .cyan
-                )
-                MetricCard(
-                    title: "THỜI GIAN MÁY CHẠY",
-                    value: formatUptime(snapshot.uptime),
-                    detail: "Kể từ lần khởi động gần nhất",
-                    icon: "clock.arrow.circlepath",
-                    tint: .purple
-                )
-                MetricCard(
-                    title: "LOW POWER",
-                    value: snapshot.isLowPowerMode ? "ON" : "OFF",
-                    detail: "Trạng thái iOS cung cấp",
-                    icon: "bolt.fill",
-                    tint: snapshot.isLowPowerMode ? .orange : .yellow
-                )
-            }
-        }
-    }
-
-    private var footer: some View {
-        VStack(spacing: 10) {
-            Text("DeviceScope chỉ đọc các chỉ số iOS cho phép ứng dụng thông thường truy cập.")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.38))
-                .multilineTextAlignment(.center)
-            Button("Giới thiệu và giới hạn") { showingAbout = true }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color.cyan)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 5)
-    }
-
-    private var aboutSheet: some View {
-        NavigationView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("DeviceScope không ép xung CPU, không giải phóng RAM của ứng dụng khác và không tắt tiến trình hệ thống. iOS không cấp các quyền đó cho ứng dụng thông thường.")
-                Text("Chỉ số RAM hiển thị là bộ nhớ đang được chính DeviceScope sử dụng, không phải tổng RAM trống của iPhone.")
-                Text("Trạng thái nhiệt được đọc từ ProcessInfo. Đây là mức nhiệt hệ thống báo cáo, không phải số đo nhiệt độ chính xác theo °C.")
-                Spacer()
-            }
-            .font(.system(size: 14))
-            .foregroundStyle(.primary)
-            .padding(20)
-            .navigationTitle("Giới thiệu")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Đóng") { showingAbout = false }
-                }
-            }
-        }
-        .preferredColorScheme(.light)
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .fill(Color.white.opacity(0.055))
-            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.09), lineWidth: 1))
-    }
-
-    private var thermalColor: Color {
-        switch snapshot.thermalState {
-        case .nominal: return .green
-        case .fair: return .yellow
-        case .serious: return .orange
-        case .critical: return .red
-        @unknown default: return .gray
         }
     }
 
@@ -475,48 +576,5 @@ struct DashboardView: View {
         if days > 0 { return "\(days)d \(hours)h" }
         if hours > 0 { return "\(hours)h \(minutes)m" }
         return "\(minutes)m"
-    }
-}
-
-private struct MetricCard: View {
-    let title: String
-    let value: String
-    let detail: String
-    let icon: String
-    let tint: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(tint)
-                Spacer()
-                Circle().fill(tint.opacity(0.9)).frame(width: 6, height: 6)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    
-                    .foregroundStyle(.white.opacity(0.47))
-                Text(value)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Text(detail)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.42))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(15)
-        .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color.white.opacity(0.055))
-                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.085), lineWidth: 1))
-        )
     }
 }
