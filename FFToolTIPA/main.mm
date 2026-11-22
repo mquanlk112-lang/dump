@@ -32,7 +32,6 @@ extern "C" void UIApplicationInstantiateSingleton(id applicationClass);
 static NSString * const kFFHUDPIDPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud.pid";
 static NSString * const kFFHUDDismissNotification = @"com.minhquandev.fftool.hud.dismiss";
 static const CGFloat kFFPurple = 0.68;
-static const CGFloat kFFBlue = 0.30;
 
 static UIColor *FFColor(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
     return [UIColor colorWithRed:r green:g blue:b alpha:a];
