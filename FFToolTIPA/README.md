@@ -16,3 +16,10 @@ Open FF Tool, press **Bật HUD trên màn hình**, then switch to another app. 
 The child HUD process is spawned by the TrollStore-installed app with the required persona settings and uses an accessibility-hosted system window. It does not inject into Free Fire, read game memory, alter gameplay, or inspect match data. The overlay is an independent device-status display. This requires the TrollStore entitlement path and may depend on iOS / TrollStore compatibility; build success does not prove on-device support.
 
 Temperature uses Apple's thermal-pressure category rather than °C. Free RAM is an estimate based on free VM pages.
+
+
+## HUD window host diagnostics
+
+The system HUD retains its `SBSAccessibilityWindowHostingController` for the full delegate lifetime, obtains the window context ID through `UIWindow._contextId`, and registers via the private window-host API. A diagnostic status file is written under `/var/mobile/Library/Caches/com.minhquandev.fftool.hud-status.plist`; stages include `window_created`, `window_hosted`, and explicit registration failures. The UI reports registration state rather than treating a live PID as proof that the overlay is visible.
+
+The window-host lifecycle was reviewed against Lessica's TrollSpeed (MIT); see `THIRD_PARTY_NOTICES.md`. The HUD remains an independent system-window process and is not injected into Free Fire.
