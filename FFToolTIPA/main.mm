@@ -28,6 +28,29 @@ extern "C" void GSInitialize(void);
 extern "C" void BKSDisplayServicesStart(void);
 extern "C" void UIApplicationInitialize(void);
 extern "C" void UIApplicationInstantiateSingleton(id applicationClass);
+extern "C" CFStringRef SBSCopyFrontmostApplicationDisplayIdentifier(void);
+
+static NSSet<NSString *> *FFGameBundleIDs(void) {
+    static NSSet<NSString *> *ids;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        ids = [NSSet setWithArray:@[
+            @"com.dts.freefireth",
+            @"com.dts.freefiremax",
+            @"com.garena.game.ffi"
+        ]];
+    });
+    return ids;
+}
+
+static BOOL FFIsFreeFireForeground(void) {
+    CFStringRef identifier = SBSCopyFrontmostApplicationDisplayIdentifier();
+    if (!identifier) return NO;
+    NSString *bundleID = (__bridge NSString *)identifier;
+    BOOL matches = [FFGameBundleIDs() containsObject:bundleID];
+    CFRelease(identifier);
+    return matches;
+}
 
 static NSString * const kFFHUDPIDPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud.pid";
 static NSString * const kFFHUDSettingsPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud-settings.plist";
@@ -415,7 +438,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
             [self.contentStack addArrangedSubview:[self sectionHeading:@"CHẾ ĐỘ KHI CHƠI" subtitle:@"Trạng thái thiết bị nổi trên màn hình"]];
             [self.contentStack addArrangedSubview:[self hudControlCard]];
             [self.contentStack addArrangedSubview:[self fovControlCard]];
-            [self.contentStack addArrangedSubview:[self informationCard:@"HUD độc lập" body:@"Vòng tròn FOV là lớp vẽ cố định để trang trí màn hình. Không có khóa mục tiêu, tracking, ESP hoặc đọc dữ liệu trận đấu."]];
+            [self.contentStack addArrangedSubview:[self informationCard:@"Chỉ hiện trong Free Fire" body:@"HUD và vòng FOV tự bật khi Free Fire ở foreground, tự ẩn khi thoát hoặc chuyển sang app khác. Vòng FOV là hình tròn tĩnh, không aim, tracking hoặc ESP."]];
             break;
         case 2: {
             [self.contentStack addArrangedSubview:[self sectionHeading:@"CÔNG CỤ" subtitle:@"Điều khiển HUD, vòng FOV và chỉ số"]];
@@ -734,7 +757,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     UIStackView *opacityHeading = [[UIStackView alloc] initWithArrangedSubviews:@[opacityTitle, [UIView new], opacityValue]];
     opacityHeading.axis = UILayoutConstraintAxisHorizontal;
 
-    UILabel *hint = FFLabel(@"Chỉ là nét vẽ cố định, không tự bám theo người chơi và không tác động điều khiển ngắm.", 10, UIFontWeightMedium, FFColor(0.78, 0.71, 0.98, 1));
+    UILabel *hint = FFLabel(@"Chỉ hiện trong Free Fire. Đây là nét vẽ cố định, không tự bám theo người chơi và không tác động điều khiển ngắm.", 10, UIFontWeightMedium, FFColor(0.78, 0.71, 0.98, 1));
     hint.numberOfLines = 0;
     self.fovHintLabel = hint;
 
@@ -1179,14 +1202,20 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     self.panel.expanded = NO;
     [self.view addSubview:self.panel];
 
-    self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
+    self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:0.5
                                                          target:self
                                                        selector:@selector(refreshHUD)
                                                        userInfo:nil
                                                         repeats:YES];
+    [self refreshHUD];
 }
 
 - (void)refreshHUD {
+    BOOL inFreeFire = FFIsFreeFireForeground();
+    self.panel.hidden = !inFreeFire;
+    self.ring.hidden = !inFreeFire;
+    if (!inFreeFire) return;
+
     [self.panel refreshMetrics];
     [self.ring applySettings:FFLoadHUDSettings()];
 }
