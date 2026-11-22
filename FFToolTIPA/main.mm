@@ -804,6 +804,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @end
 
 @interface FFHUDPanelView ()
+@property(nonatomic, strong) UIStackView *labelStack;
 @property(nonatomic, strong) UILabel *titleLabel;
 @property(nonatomic, strong) UILabel *detailLabel;
 @property(nonatomic, strong) UILabel *footerLabel;
@@ -835,22 +836,19 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
         self.footerLabel = FFLabel(@"UPTIME: --  ·  CHẠM ĐỂ THU GỌN", 8, UIFontWeightMedium, FFColor(0.73, 0.68, 0.85, 1));
         self.footerLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
-        [self addSubview:self.titleLabel];
-        [self addSubview:self.detailLabel];
-        [self addSubview:self.footerLabel];
+        self.labelStack = [[UIStackView alloc] initWithArrangedSubviews:@[self.titleLabel, self.detailLabel, self.footerLabel]];
+        self.labelStack.translatesAutoresizingMaskIntoConstraints = NO;
+        self.labelStack.axis = UILayoutConstraintAxisVertical;
+        self.labelStack.alignment = UIStackViewAlignmentFill;
+        self.labelStack.distribution = UIStackViewDistributionFill;
+        self.labelStack.spacing = 4;
+        [self addSubview:self.labelStack];
 
         [NSLayoutConstraint activateConstraints:@[
-            [self.titleLabel.topAnchor constraintEqualToAnchor:self.topAnchor constant:8],
-            [self.titleLabel.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:10],
-            [self.titleLabel.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-10],
-            [self.titleLabel.heightAnchor constraintEqualToConstant:15],
-            [self.detailLabel.topAnchor constraintEqualToAnchor:self.titleLabel.bottomAnchor constant:5],
-            [self.detailLabel.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:10],
-            [self.detailLabel.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-10],
-            [self.footerLabel.topAnchor constraintEqualToAnchor:self.detailLabel.bottomAnchor constant:4],
-            [self.footerLabel.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:10],
-            [self.footerLabel.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-10],
-            [self.footerLabel.bottomAnchor constraintLessThanOrEqualToAnchor:self.bottomAnchor constant:-7]
+            [self.labelStack.topAnchor constraintEqualToAnchor:self.topAnchor constant:8],
+            [self.labelStack.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:10],
+            [self.labelStack.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-10],
+            [self.labelStack.bottomAnchor constraintLessThanOrEqualToAnchor:self.bottomAnchor constant:-7]
         ]];
 
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleExpanded)];
