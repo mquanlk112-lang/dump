@@ -8,6 +8,11 @@
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>FF Tool</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>NSPrincipalClass</key><string>FFHUDApplication</string>
+  <key>UIApplicationShowsViewsWhileLocked</key><false/>
+  <key>UIApplicationSystemWindowsSecureKey</key><true/>
+  <key>UIBackgroundStyle</key><string>UIBackgroundStyleDarkBlur</string>
+  <key>UIRequiresFullScreen</key><true/>
   <key>CFBundleShortVersionString</key><string>2.0.0</string>
   <key>CFBundleVersion</key><string>2</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
