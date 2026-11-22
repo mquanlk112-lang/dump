@@ -10,7 +10,7 @@ The dashboard follows the supplied dark violet / neon-purple reference: FF Tool 
 
 The GitHub Actions workflow builds one rootless Debian package:
 
-- FFTool-Combined.deb — contains the FF Tool app at /Applications/FF Tool.app and the HUD tweak in the rootless MobileSubstrate directory.
+- FFTool-Combined.deb — contains the FF Tool app at /var/jb/Applications/FF Tool.app and the HUD tweak in the rootless MobileSubstrate directory.
 
 Install the single .deb from Sileo or Zebra and respring SpringBoard. The package post-install script registers the app with uicache. Open FF Tool, tap Bật HUD trên màn hình, then switch to Free Fire. The app and tweak are installed together; TrollStore is not required for this combined package.
 
