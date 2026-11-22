@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import <spawn.h>
 #import <sys/wait.h>
 #import <signal.h>
@@ -48,17 +49,87 @@ static NSSet<NSString *> *FFGameBundleIDs(void) {
 
 static void FFAppendHUDLog(NSString *category, NSString *message);
 
-static NSString *FFCurrentFrontmostBundleID(void) {
-    CFStringRef identifier = SBSCopyFrontmostApplicationDisplayIdentifier();
-    NSString *bundleID = identifier ? [((__bridge NSString *)identifier) copy] : @"<unavailable>";
-    if (identifier) CFRelease(identifier);
+static NSString *gFFFrontmostSource = @"unknown";
 
-    static NSString *lastBundleID = nil;
-    if (!lastBundleID || ![lastBundleID isEqualToString:bundleID]) {
-        FFAppendHUDLog(@"FRONTMOST", [NSString stringWithFormat:@"bundle_id=%@", bundleID]);
-        lastBundleID = [bundleID copy];
+typedef NSUInteger (*FFBKSStateFunction)(id, SEL, id);
+typedef void (*FFBKSInvalidateFunction)(id, SEL);
+
+static NSString *FFCurrentFrontmostBundleID(void) {
+    // SpringBoardServices may return NULL from external processes on iOS 15+.
+    // Use it on older systems; on newer systems query BackBoard app state.
+    if (@available(iOS 15.0, *)) {
+        gFFFrontmostSource = @"BackBoard";
+    } else {
+        CFStringRef identifier = SBSCopyFrontmostApplicationDisplayIdentifier();
+        if (identifier) {
+            NSString *bundleID = [((__bridge NSString *)identifier) copy];
+            CFRelease(identifier);
+            gFFFrontmostSource = @"SpringBoardServices";
+            return bundleID;
+        }
+        gFFFrontmostSource = @"SpringBoardServices(NULL)";
+        FFAppendHUDLog(@"FRONTMOST", @"SBSCopyFrontmostApplicationDisplayIdentifier returned NULL; trying BackBoard");
     }
-    return bundleID;
+
+    Class monitorClass = NSClassFromString(@"BKSApplicationStateMonitor");
+    if (!monitorClass) {
+        gFFFrontmostSource = @"BackBoard(class_missing)";
+        FFAppendHUDLog(@"BACKBOARD_ERROR", @"BKSApplicationStateMonitor class not found");
+        return @"<backboard-class-missing>";
+    }
+
+    id monitor = [[monitorClass alloc] init];
+    SEL stateSelector = NSSelectorFromString(@"applicationStateForApplication:");
+    SEL invalidateSelector = NSSelectorFromString(@"invalidate");
+    if (!monitor || ![monitor respondsToSelector:stateSelector]) {
+        gFFFrontmostSource = @"BackBoard(selector_missing)";
+        FFAppendHUDLog(@"BACKBOARD_ERROR", @"BKSApplicationStateMonitor does not respond to applicationStateForApplication:");
+        return @"<backboard-selector-missing>";
+    }
+
+    static NSDictionary<NSString *, NSNumber *> *lastStates = nil;
+    NSMutableDictionary<NSString *, NSNumber *> *currentStates = [NSMutableDictionary dictionary];
+    NSString *matchedBundleID = nil;
+    NSArray<NSString *> *candidates = @[
+        @"com.dts.freefireth",
+        @"com.dts.freefiremax",
+        @"com.garena.game.ffi"
+    ];
+
+    @try {
+        FFBKSStateFunction stateFunction = (FFBKSStateFunction)objc_msgSend;
+        for (NSString *candidate in candidates) {
+            NSUInteger state = stateFunction(monitor, stateSelector, candidate);
+            BOOL foreground = (state & (1UL << 3)) != 0; // BKS foreground-running bit
+            currentStates[candidate] = @(state);
+
+            NSNumber *oldState = lastStates[candidate];
+            if (!oldState || oldState.unsignedIntegerValue != state) {
+                FFAppendHUDLog(@"BACKBOARD_STATE", [NSString stringWithFormat:
+                    @"bundle_id=%@ | state=%lu | foreground_running=%@",
+                    candidate, (unsigned long)state, foreground ? @"YES" : @"NO"]);
+            }
+            if (foreground && !matchedBundleID) matchedBundleID = candidate;
+        }
+
+        lastStates = [currentStates copy];
+        if ([monitor respondsToSelector:invalidateSelector]) {
+            ((FFBKSInvalidateFunction)objc_msgSend)(monitor, invalidateSelector);
+        }
+    } @catch (NSException *exception) {
+        gFFFrontmostSource = @"BackBoard(exception)";
+        NSString *reason = [NSString stringWithFormat:@"BKS state query exception | %@ | %@",
+                            exception.name ?: @"unknown", exception.reason ?: @"(none)"];
+        FFAppendHUDLog(@"BACKBOARD_ERROR", reason);
+        return @"<backboard-query-exception>";
+    }
+
+    if (matchedBundleID) {
+        FFAppendHUDLog(@"FRONTMOST", [NSString stringWithFormat:@"bundle_id=%@ | source=BackBoard", matchedBundleID]);
+        return matchedBundleID;
+    }
+
+    return @"<no-freefire-match>";
 }
 
 static NSString * const kFFHUDPIDPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud.pid";
@@ -189,6 +260,7 @@ static void FFWriteHUDRuntimeState(NSString *bundleID, BOOL foregroundMatch) {
     NSMutableDictionary *status = [NSMutableDictionary dictionaryWithDictionary:FFReadHUDStatus()];
     status[@"frontmostBundleID"] = bundleID ?: @"<unavailable>";
     status[@"foregroundMatch"] = @(foregroundMatch);
+    status[@"foregroundSource"] = gFFFrontmostSource ?: @"unknown";
     status[@"foregroundUpdated"] = @([[NSDate date] timeIntervalSince1970]);
     [status writeToFile:kFFHUDStatusPath atomically:YES];
 }
@@ -1109,7 +1181,8 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     NSString *stage = status[@"stage"] ?: @"chưa có trạng thái";
     NSString *bundleID = status[@"frontmostBundleID"] ?: @"chưa có dữ liệu";
     NSString *matchText = [status[@"foregroundMatch"] boolValue] ? @"ĐÚNG Free Fire" : @"không khớp / chưa xác định";
-    self.diagnosticLogStatusLabel.text = [NSString stringWithFormat:@"HUD: %@  ·  %@  ·  %@", stage, matchText, bundleID];
+    NSString *source = status[@"foregroundSource"] ?: @"nguồn chưa xác định";
+    self.diagnosticLogStatusLabel.text = [NSString stringWithFormat:@"HUD: %@  ·  %@  ·  %@  ·  %@", stage, matchText, bundleID, source];
     self.diagnosticLogView.text = FFReadHUDLogTail(80);
     if (self.diagnosticLogView.text.length) {
         [self.diagnosticLogView scrollRangeToVisible:NSMakeRange(self.diagnosticLogView.text.length - 1, 1)];
@@ -1121,11 +1194,13 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     NSDictionary *status = FFReadHUDStatus();
     NSString *bundleID = status[@"frontmostBundleID"] ?: @"(no HUD foreground sample yet)";
     NSString *matchText = [status[@"foregroundMatch"] boolValue] ? @"YES" : @"NO / unknown";
-    NSString *payload = [NSString stringWithFormat:@"FF TOOL DIAGNOSTICS\nHUD stage: %@\nHUD detail: %@\nLast HUD frontmost bundle: %@\nMatched Free Fire: %@\n\n%@",
+    NSString *source = status[@"foregroundSource"] ?: @"unknown";
+    NSString *payload = [NSString stringWithFormat:@"FF TOOL DIAGNOSTICS\nHUD stage: %@\nHUD detail: %@\nLast HUD foreground probe: %@\nMatched Free Fire: %@\nDetection source: %@\n\n%@",
                          status[@"stage"] ?: @"unknown",
                          status[@"detail"] ?: @"",
                          bundleID,
                          matchText,
+                         source,
                          log];
     UIPasteboard.generalPasteboard.string = payload;
     FFAppendHUDLog(@"DASHBOARD", @"User copied diagnostic log to clipboard");
@@ -1459,14 +1534,18 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     BOOL inFreeFire = [FFGameBundleIDs() containsObject:bundleID];
     static BOOL hasLoggedForeground = NO;
     static BOOL lastForeground = NO;
-    if (!hasLoggedForeground || lastForeground != inFreeFire) {
-        FFAppendHUDLog(@"VISIBILITY", [NSString stringWithFormat:@"foreground_match=%@ | bundle_id=%@ | panel_hidden=%@ | ring_hidden=%@",
+    static NSString *lastObservedBundleID = nil;
+    BOOL bundleChanged = !lastObservedBundleID || ![lastObservedBundleID isEqualToString:bundleID];
+    if (!hasLoggedForeground || lastForeground != inFreeFire || bundleChanged) {
+        FFAppendHUDLog(@"VISIBILITY", [NSString stringWithFormat:@"source=%@ | foreground_match=%@ | bundle_id=%@ | panel_hidden=%@ | ring_hidden=%@",
+                                       gFFFrontmostSource ?: @"unknown",
                                        inFreeFire ? @"YES" : @"NO",
                                        bundleID,
                                        inFreeFire ? @"NO" : @"YES",
                                        inFreeFire ? @"NO" : @"YES"]);
         hasLoggedForeground = YES;
         lastForeground = inFreeFire;
+        lastObservedBundleID = [bundleID copy];
         FFWriteHUDRuntimeState(bundleID, inFreeFire);
     }
 
