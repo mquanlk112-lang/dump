@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import "FFToolAPI.h"
 #import <QuartzCore/QuartzCore.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <objc/runtime.h>
@@ -150,68 +151,18 @@ static NSDictionary *FFDefaultHUDSettings(void) {
 }
 
 static NSDictionary *FFLoadHUDSettings(void) {
-    NSMutableDictionary *settings = [NSMutableDictionary dictionaryWithDictionary:FFDefaultHUDSettings()];
-    NSDictionary *saved = [NSDictionary dictionaryWithContentsOfFile:kFFHUDSettingsPath];
-    if ([saved isKindOfClass:NSDictionary.class]) [settings addEntriesFromDictionary:saved];
-    return settings;
+    return [[FFToolAPI sharedAPI] settingsWithDefaults:FFDefaultHUDSettings()];
 }
 
 static BOOL FFSaveHUDSettings(NSDictionary *settings) {
-    NSString *directory = [kFFHUDSettingsPath stringByDeletingLastPathComponent];
     NSError *error = nil;
-    [[NSFileManager defaultManager] createDirectoryAtPath:directory
-                              withIntermediateDirectories:YES
-                                               attributes:nil
-                                                    error:&error];
-    if (error) return NO;
-    return [settings writeToFile:kFFHUDSettingsPath atomically:YES];
+    BOOL saved = [[FFToolAPI sharedAPI] saveSettings:settings error:&error];
+    if (!saved) [[FFToolAPI sharedAPI] logCategory:@"SETTINGS" message:error.localizedDescription ?: @"Settings save failed"];
+    return saved;
 }
 
 static void FFAppendHUDLog(NSString *category, NSString *message) {
-    @autoreleasepool {
-        static NSDateFormatter *formatter;
-        static dispatch_once_t onceToken;
-        dispatch_once(&onceToken, ^{
-            formatter = [[NSDateFormatter alloc] init];
-            formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
-            formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
-        });
-
-        NSString *line = [NSString stringWithFormat:@"%@ | pid=%d | %@ | %@\n",
-                          [formatter stringFromDate:[NSDate date]],
-                          getpid(),
-                          category ?: @"LOG",
-                          message ?: @""];
-        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
-        NSString *directory = [kFFHUDLogPath stringByDeletingLastPathComponent];
-        [NSFileManager.defaultManager createDirectoryAtPath:directory
-                                  withIntermediateDirectories:YES
-                                                   attributes:nil
-                                                        error:nil];
-
-        NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:kFFHUDLogPath error:nil];
-        unsigned long long currentSize = [attributes fileSize];
-        if (currentSize > 512 * 1024) {
-            NSData *existing = [NSData dataWithContentsOfFile:kFFHUDLogPath];
-            NSUInteger keepBytes = MIN((NSUInteger)(384 * 1024), existing.length);
-            NSData *tail = [existing subdataWithRange:NSMakeRange(existing.length - keepBytes, keepBytes)];
-            [tail writeToFile:kFFHUDLogPath atomically:YES];
-        }
-
-        @try {
-            NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:kFFHUDLogPath];
-            if (!handle) {
-                [NSFileManager.defaultManager createFileAtPath:kFFHUDLogPath contents:[NSData data] attributes:nil];
-                handle = [NSFileHandle fileHandleForWritingAtPath:kFFHUDLogPath];
-            }
-            [handle seekToEndOfFile];
-            [handle writeData:data];
-            [handle closeFile];
-        } @catch (NSException *exception) {
-            NSLog(@"[FFToolHUD] log write failed: %@", exception);
-        }
-        NSLog(@"[FFToolHUD] %@", [line stringByTrimmingCharactersInSet:NSCharacterSet.newlineCharacterSet]);
-    }
+    [[FFToolAPI sharedAPI] logCategory:category ?: @"LOG" message:message ?: @""];
 }
 
 static NSString *FFReadHUDLogTail(NSUInteger maxLines) {
@@ -243,6 +194,11 @@ static void FFWriteHUDStatus(NSString *stage, NSString *detail) {
     BOOL saved = [status writeToFile:kFFHUDStatusPath atomically:YES];
     FFAppendHUDLog(@"STATUS", [NSString stringWithFormat:@"%@ | %@ | status_file=%@",
                                stage ?: @"unknown", detail ?: @"", saved ? @"ok" : @"failed"]);
+    [[FFToolAPI sharedAPI] publishEvent:@"hud.status.changed" payload:@{
+        @"stage": stage ?: @"unknown",
+        @"detail": detail ?: @"",
+        @"saved": @(saved)
+    }];
 }
 
 static NSDictionary *FFReadHUDStatus(void) {
@@ -499,6 +455,17 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 
 @implementation FFToolAppDelegate
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
+    NSError *apiError = nil;
+    FFToolAPI *api = [FFToolAPI sharedAPI];
+    BOOL apiReady = [api initializeWithError:&apiError];
+    NSDictionary *apiTest = [api selfTest];
+    [api logCategory:@"API_BOOT" message:[NSString stringWithFormat:
+        @"ready=%@ | self_test=%@ | checks=%@/%@ | error=%@",
+        apiReady ? @"YES" : @"NO",
+        [apiTest[@"passed"] boolValue] ? @"PASS" : @"FAIL",
+        apiTest[@"passedCount"] ?: @0,
+        apiTest[@"checkCount"] ?: @0,
+        apiError.localizedDescription ?: @"none"]];
     UIDevice.currentDevice.batteryMonitoringEnabled = YES;
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     self.window.backgroundColor = FFCanvas();
@@ -1582,7 +1549,12 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     static NSString *lastObservedBundleID = nil;
     BOOL bundleChanged = !lastObservedBundleID || ![lastObservedBundleID isEqualToString:bundleID];
     if (!hasLoggedForeground || lastForeground != inFreeFire || bundleChanged) {
-        FFAppendHUDLog(@"VISIBILITY", [NSString stringWithFormat:@"source=%@ | foreground_match=%@ | bundle_id=%@ | panel_hidden=%@ | ring_hidden=%@",
+        [[FFToolAPI sharedAPI] publishEvent:@"hud.foreground.changed" payload:@{
+            @"bundleID": bundleID ?: @"<unavailable>",
+            @"matched": @(inFreeFire),
+            @"source": gFFFrontmostSource ?: @"unknown"
+        }];
+        FFAppendHUDLog(@"VISIBILITY", [NSString stringWithFormat:@"source=%@ | foreground_match=%@ | bundle_id=%@ | panel_hidden=%@",
                                        gFFFrontmostSource ?: @"unknown",
                                        inFreeFire ? @"YES" : @"NO",
                                        bundleID,
@@ -1741,6 +1713,17 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @end
 
 static int FFRunHUDProcess(void) {
+    NSError *apiError = nil;
+    FFToolAPI *api = [FFToolAPI sharedAPI];
+    BOOL apiReady = [api initializeWithError:&apiError];
+    NSDictionary *apiTest = [api selfTest];
+    [api logCategory:@"API_HUD_BOOT" message:[NSString stringWithFormat:
+        @"ready=%@ | self_test=%@ | checks=%@/%@ | error=%@",
+        apiReady ? @"YES" : @"NO",
+        [apiTest[@"passed"] boolValue] ? @"PASS" : @"FAIL",
+        apiTest[@"passedCount"] ?: @0,
+        apiTest[@"checkCount"] ?: @0,
+        apiError.localizedDescription ?: @"none"]];
     FFWriteHUDStatus(@"initializing", @"Starting system HUD application");
     FFAppendHUDLog(@"BOOT", [NSString stringWithFormat:@"iOS=%@ | executable=%@ | uid=%d | euid=%d", UIDevice.currentDevice.systemVersion, FFExecutablePath() ?: @"unknown", getuid(), geteuid()]);
     [UIScreen initialize];
