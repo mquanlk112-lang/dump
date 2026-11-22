@@ -1,6 +1,7 @@
 # FF Tool 2.0 — Single TIPA
 
 This project builds one TrollStore-installable `FFTool.tipa` containing:
+- A shared `FFToolAPI` service module for device telemetry, persistent settings, structured cross-process logging, in-process events, module lifecycle and runtime self-tests.
 - The FF Tool dashboard UI (purple neon reference design).
 - The same executable started in a separate root HUD mode.
 - A draggable, expandable system overlay that displays device battery, iOS thermal-pressure state, estimated free RAM and uptime.
