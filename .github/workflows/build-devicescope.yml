@@ -1,0 +1,102 @@
+name: Build DeviceScope TIPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - devicescope-build
+    paths:
+      - 'DeviceScope/**'
+      - '.github/workflows/build-devicescope.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devicescope-tipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build unsigned iOS app and TIPA
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode and report SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: DeviceScope
+        run: xcodegen generate --spec project.yml
+
+      - name: Validate generated project
+        run: |
+          set -euo pipefail
+          xcodebuild -list -project DeviceScope/DeviceScope.xcodeproj
+          plutil -lint DeviceScope/Config/Info.plist
+
+      - name: Build for physical iOS devices
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project DeviceScope/DeviceScope.xcodeproj \
+            -scheme DeviceScope \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DeviceScope-DerivedData" \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Package and verify TIPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DeviceScope-DerivedData/Build/Products/Release-iphoneos/DeviceScope.app"
+          test -d "$APP_PATH"
+          test -f "$APP_PATH/Info.plist"
+
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")
+          test "$BUNDLE_ID" = "com.minhquandev.devicescope"
+          test -f "$APP_PATH/$EXECUTABLE"
+
+          ARCHS="$(lipo -archs "$APP_PATH/$EXECUTABLE")"
+          echo "Executable architectures: $ARCHS"
+          echo "$ARCHS" | grep -q 'arm64'
+
+          PACKAGE_ROOT="$RUNNER_TEMP/DeviceScope-Package"
+          rm -rf "$PACKAGE_ROOT"
+          mkdir -p "$PACKAGE_ROOT/Payload"
+          ditto "$APP_PATH" "$PACKAGE_ROOT/Payload/DeviceScope.app"
+
+          cd "$PACKAGE_ROOT"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/DeviceScope.tipa" Payload
+          unzip -t "$GITHUB_WORKSPACE/DeviceScope.tipa"
+          unzip -Z1 "$GITHUB_WORKSPACE/DeviceScope.tipa" | grep -q '^Payload/DeviceScope.app/Info.plist$'
+          test -s "$GITHUB_WORKSPACE/DeviceScope.tipa"
+          shasum -a 256 "$GITHUB_WORKSPACE/DeviceScope.tipa"
+
+      - name: Upload TIPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeviceScope-TIPA
+          path: DeviceScope.tipa
+          if-no-files-found: error
+          retention-days: 14
