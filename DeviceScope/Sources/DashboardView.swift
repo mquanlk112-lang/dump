@@ -1,10 +1,14 @@
 import SwiftUI
 import UIKit
 import Combine
+import ActivityKit
 
 struct DashboardView: View {
     @State private var snapshot = DeviceSnapshot.capture()
     @State private var showingAbout = false
+    @State private var isLiveActivityActive = false
+    @State private var liveActivityMessage = "Nhấn Bật trước khi mở game. Dynamic Island hiển thị lần đọc gần nhất; iOS có thể tạm dừng cập nhật khi game ở foreground."
+    @State private var lastLiveActivityUpdate = Date.distantPast
     private let refreshTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -19,6 +23,7 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     deviceCard
+                    liveActivityCard
                     thermalCard
                     metricsGrid
                     footer
@@ -32,8 +37,12 @@ struct DashboardView: View {
         .onAppear {
             UIDevice.current.isBatteryMonitoringEnabled = true
             snapshot = DeviceSnapshot.capture()
+            refreshLiveActivityStatus()
         }
-        .onReceive(refreshTimer) { _ in snapshot = DeviceSnapshot.capture() }
+        .onReceive(refreshTimer) { _ in
+            snapshot = DeviceSnapshot.capture()
+            updateLiveActivity(force: false)
+        }
     }
 
     private var header: some View {
@@ -50,6 +59,7 @@ struct DashboardView: View {
             Spacer()
             Button {
                 snapshot = DeviceSnapshot.capture()
+                updateLiveActivity(force: true)
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 16, weight: .semibold))
@@ -114,6 +124,151 @@ struct DashboardView: View {
         }
         .padding(18)
         .background(cardBackground)
+    }
+
+
+    private var liveActivityCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Color.cyan.opacity(0.14))
+                        .frame(width: 46, height: 46)
+                    Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(Color.cyan)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("DYNAMIC ISLAND")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.52))
+                    Text(isLiveActivityActive ? "Đang hiển thị trạng thái" : "Hiện trạng thái khi chơi game")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                Spacer(minLength: 4)
+                Button(action: toggleLiveActivity) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isLiveActivityActive ? "stop.fill" : "play.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(isLiveActivityActive ? "Tắt" : "Bật")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        isLiveActivityActive ? Color.red.opacity(0.22) : Color.cyan.opacity(0.20),
+                        in: Capsule()
+                    )
+                    .overlay(
+                        Capsule().stroke(
+                            isLiveActivityActive ? Color.red.opacity(0.35) : Color.cyan.opacity(0.35),
+                            lineWidth: 1
+                        )
+                    )
+                }
+                .accessibilityLabel(isLiveActivityActive ? "Tắt trạng thái Dynamic Island" : "Bật trạng thái Dynamic Island")
+            }
+            Text(liveActivityMessage)
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.46))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .background(cardBackground)
+    }
+
+    private func makeLiveActivityState() -> DeviceScopeActivityAttributes.ContentState {
+        DeviceScopeActivityAttributes.ContentState(
+            batteryPercent: snapshot.batteryLevel ?? -1,
+            batteryState: snapshot.batteryState,
+            thermalLabel: snapshot.thermalState.displayName,
+            memoryMB: snapshot.appMemoryMB.map { Int($0.rounded()) } ?? -1,
+            lastUpdated: Date()
+        )
+    }
+
+    private func refreshLiveActivityStatus() {
+        guard #available(iOS 16.1, *) else {
+            liveActivityMessage = "Live Activity yêu cầu iOS 16.1 trở lên."
+            return
+        }
+        isLiveActivityActive = !Activity<DeviceScopeActivityAttributes>.activities.isEmpty
+        if isLiveActivityActive {
+            liveActivityMessage = "Đang chạy. Nội dung là lần đọc gần nhất; mở lại DeviceScope để làm mới số liệu."
+        }
+    }
+
+    private func toggleLiveActivity() {
+        guard #available(iOS 16.1, *) else {
+            liveActivityMessage = "Live Activity yêu cầu iOS 16.1 trở lên."
+            return
+        }
+
+        let activeActivities = Activity<DeviceScopeActivityAttributes>.activities
+        if !activeActivities.isEmpty {
+            for activity in activeActivities {
+                Task {
+                    await activity.end(using: nil, dismissalPolicy: .immediate)
+                }
+            }
+            isLiveActivityActive = false
+            liveActivityMessage = "Đã tắt trạng thái trên Dynamic Island."
+            return
+        }
+
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            isLiveActivityActive = false
+            liveActivityMessage = "Live Activities đang bị tắt trong Cài đặt iPhone."
+            return
+        }
+
+        let attributes = DeviceScopeActivityAttributes(deviceModel: snapshot.model)
+        let state = makeLiveActivityState()
+
+        do {
+            if #available(iOS 16.2, *) {
+                let content = ActivityContent(
+                    state: state,
+                    staleDate: Date().addingTimeInterval(120)
+                )
+                _ = try Activity.request(attributes: attributes, content: content, pushType: nil)
+            } else {
+                _ = try Activity.request(attributes: attributes, contentState: state, pushType: nil)
+            }
+            isLiveActivityActive = true
+            lastLiveActivityUpdate = Date()
+            liveActivityMessage = "Đã bật. Mở game để xem chỉ số trên Dynamic Island; số liệu sẽ là lần đọc gần nhất của ứng dụng."
+        } catch {
+            isLiveActivityActive = false
+            liveActivityMessage = "Không bật được Live Activity: \\(error.localizedDescription)"
+        }
+    }
+
+    private func updateLiveActivity(force: Bool) {
+        guard #available(iOS 16.1, *) else { return }
+        let activities = Activity<DeviceScopeActivityAttributes>.activities
+        guard !activities.isEmpty else { return }
+
+        let now = Date()
+        guard force || now.timeIntervalSince(lastLiveActivityUpdate) >= 30 else { return }
+        lastLiveActivityUpdate = now
+        let state = makeLiveActivityState()
+
+        for activity in activities {
+            Task {
+                if #available(iOS 16.2, *) {
+                    let content = ActivityContent(
+                        state: state,
+                        staleDate: Date().addingTimeInterval(120)
+                    )
+                    await activity.update(content)
+                } else {
+                    await activity.update(using: state)
+                }
+            }
+        }
     }
 
     private var thermalCard: some View {

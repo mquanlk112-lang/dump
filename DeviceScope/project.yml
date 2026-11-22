@@ -14,6 +14,9 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+    dependencies:
+      - target: DeviceScopeLiveActivity
+        embed: true
     info:
       path: Config/Info.plist
     settings:
@@ -23,3 +26,22 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGNING_ALLOWED: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  DeviceScopeLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: WidgetExtension
+      - path: Sources/DeviceScopeActivityAttributes.swift
+    info:
+      path: WidgetExtension/Info.plist
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.1"
+        PRODUCT_BUNDLE_IDENTIFIER: com.minhquandev.devicescope.liveactivity
+        PRODUCT_NAME: DeviceScopeLiveActivity
+        TARGETED_DEVICE_FAMILY: "1"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        CODE_SIGNING_ALLOWED: NO

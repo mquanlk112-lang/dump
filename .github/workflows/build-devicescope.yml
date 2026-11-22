@@ -46,6 +46,7 @@ jobs:
           set -euo pipefail
           xcodebuild -list -project DeviceScope/DeviceScope.xcodeproj
           plutil -lint DeviceScope/Config/Info.plist
+          plutil -lint DeviceScope/WidgetExtension/Info.plist
 
       - name: Build for physical iOS devices
         shell: bash
@@ -76,6 +77,13 @@ jobs:
           BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")
           test "$BUNDLE_ID" = "com.minhquandev.devicescope"
           test -f "$APP_PATH/$EXECUTABLE"
+
+          EXTENSION_PATH="$APP_PATH/PlugIns/DeviceScopeLiveActivity.appex"
+          test -d "$EXTENSION_PATH"
+          EXTENSION_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$EXTENSION_PATH/Info.plist")
+          test "$EXTENSION_ID" = "com.minhquandev.devicescope.liveactivity"
+          EXT_EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$EXTENSION_PATH/Info.plist")
+          test -f "$EXTENSION_PATH/$EXT_EXECUTABLE"
 
           ARCHS="$(lipo -archs "$APP_PATH/$EXECUTABLE")"
           echo "Executable architectures: $ARCHS"

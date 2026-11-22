@@ -24,6 +24,11 @@ test -f "$APP_PATH/Info.plist"
 EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")
 test -f "$APP_PATH/$EXECUTABLE"
 
+EXTENSION_PATH="$APP_PATH/PlugIns/DeviceScopeLiveActivity.appex"
+test -d "$EXTENSION_PATH"
+EXTENSION_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$EXTENSION_PATH/Info.plist")
+test "$EXTENSION_ID" = "com.minhquandev.devicescope.liveactivity"
+
 rm -rf out
 mkdir -p out/Payload
 ditto "$APP_PATH" out/Payload/DeviceScope.app
