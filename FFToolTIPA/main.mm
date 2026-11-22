@@ -59,11 +59,6 @@ static NSString *FFCurrentFrontmostBundleID(void) {
     return bundleID;
 }
 
-static BOOL FFIsFreeFireForeground(void) {
-    NSString *bundleID = FFCurrentFrontmostBundleID();
-    return [FFGameBundleIDs() containsObject:bundleID];
-}
-
 static NSString * const kFFHUDPIDPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud.pid";
 static NSString * const kFFHUDStatusPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud-status.plist";
 static NSString * const kFFHUDLogPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud.log";
@@ -177,6 +172,14 @@ static void FFWriteHUDStatus(NSString *stage, NSString *detail) {
 static NSDictionary *FFReadHUDStatus(void) {
     NSDictionary *status = [NSDictionary dictionaryWithContentsOfFile:kFFHUDStatusPath];
     return [status isKindOfClass:NSDictionary.class] ? status : @{};
+}
+
+static void FFWriteHUDRuntimeState(NSString *bundleID, BOOL foregroundMatch) {
+    NSMutableDictionary *status = [NSMutableDictionary dictionaryWithDictionary:FFReadHUDStatus()];
+    status[@"frontmostBundleID"] = bundleID ?: @"<unavailable>";
+    status[@"foregroundMatch"] = @(foregroundMatch);
+    status[@"foregroundUpdated"] = @([[NSDate date] timeIntervalSince1970]);
+    [status writeToFile:kFFHUDStatusPath atomically:YES];
 }
 
 static UIColor *FFColor(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
@@ -1093,8 +1096,9 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 
     NSDictionary *status = FFReadHUDStatus();
     NSString *stage = status[@"stage"] ?: @"chưa có trạng thái";
-    NSString *bundleID = FFCurrentFrontmostBundleID();
-    self.diagnosticLogStatusLabel.text = [NSString stringWithFormat:@"HUD: %@  ·  App trước: %@", stage, bundleID];
+    NSString *bundleID = status[@"frontmostBundleID"] ?: @"chưa có dữ liệu";
+    NSString *matchText = [status[@"foregroundMatch"] boolValue] ? @"ĐÚNG Free Fire" : @"không khớp / chưa xác định";
+    self.diagnosticLogStatusLabel.text = [NSString stringWithFormat:@"HUD: %@  ·  %@  ·  %@", stage, matchText, bundleID];
     self.diagnosticLogView.text = FFReadHUDLogTail(80);
     if (self.diagnosticLogView.text.length) {
         [self.diagnosticLogView scrollRangeToVisible:NSMakeRange(self.diagnosticLogView.text.length - 1, 1)];
@@ -1104,11 +1108,13 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 - (void)copyDiagnosticLog {
     NSString *log = FFReadHUDLogTail(1000);
     NSDictionary *status = FFReadHUDStatus();
-    NSString *bundleID = FFCurrentFrontmostBundleID();
-    NSString *payload = [NSString stringWithFormat:@"FF TOOL DIAGNOSTICS\nHUD stage: %@\nHUD detail: %@\nFrontmost bundle: %@\n\n%@",
+    NSString *bundleID = status[@"frontmostBundleID"] ?: @"(no HUD foreground sample yet)";
+    NSString *matchText = [status[@"foregroundMatch"] boolValue] ? @"YES" : @"NO / unknown";
+    NSString *payload = [NSString stringWithFormat:@"FF TOOL DIAGNOSTICS\nHUD stage: %@\nHUD detail: %@\nLast HUD frontmost bundle: %@\nMatched Free Fire: %@\n\n%@",
                          status[@"stage"] ?: @"unknown",
                          status[@"detail"] ?: @"",
                          bundleID,
+                         matchText,
                          log];
     UIPasteboard.generalPasteboard.string = payload;
     FFAppendHUDLog(@"DASHBOARD", @"User copied diagnostic log to clipboard");
@@ -1450,6 +1456,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
                                        inFreeFire ? @"NO" : @"YES"]);
         hasLoggedForeground = YES;
         lastForeground = inFreeFire;
+        FFWriteHUDRuntimeState(bundleID, inFreeFire);
     }
 
     NSDictionary *settings = FFLoadHUDSettings();
