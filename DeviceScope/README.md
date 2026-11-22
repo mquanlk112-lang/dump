@@ -1,37 +1,32 @@
-# DeviceScope
+# FF Tool
 
-A SwiftUI device-status utility for iOS and TrollStore.
+A jailbreak-friendly iOS device-status companion with a SpringBoard-rendered floating HUD.
 
-## Features
-- Device name, model and iOS version
-- Battery percentage and charging state
-- Low Power Mode status
-- iOS thermal pressure state
-- Device uptime
-- Memory used by this app process only
-- Manual refresh and automatic 5-second refresh while the app is active
-- Optional Live Activity for the Lock Screen and Dynamic Island on supported devices
-- One-tap system-wide status HUD controlled by the companion rootless SpringBoard tweak
+## UI
 
-## Dynamic Island status
+The dashboard follows the supplied dark violet / neon-purple reference: FF Tool header, green system-status card, one-tap HUD controls, four device metrics, and bottom navigation for Home, Game, Tools and Info.
 
-Tap **Bật** in DeviceScope before switching to a game. The Live Activity shows the latest battery, thermal-state and DeviceScope memory snapshot. On iPhone 14 Pro with iOS 16.1 or later, this appears in the Dynamic Island; tapping it opens DeviceScope.
+## Single-package installation
 
-This is a snapshot, not a background sensor monitor. iOS may suspend DeviceScope after another app becomes active, so the Live Activity cannot promise continuous 5-second updates while a game is in the foreground. Reopen DeviceScope and refresh to publish a newer snapshot. Live Activities must also be enabled in iOS Settings.
+The GitHub Actions workflow builds one rootless Debian package:
 
-## Limitations
+- FFTool-Combined.deb — contains the FF Tool app at /Applications/FF Tool.app and the HUD tweak in the rootless MobileSubstrate directory.
 
-It does not overclock the CPU, kill other apps, modify game memory, inject into another app, or hide jailbreak files. RAM shown is process memory, not system-wide free memory. Thermal status is Apple's qualitative state, not a temperature measurement in °C.
+Install the single .deb from Sileo or Zebra and respring SpringBoard. The package post-install script registers the app with uicache. Open FF Tool, tap Bật HUD trên màn hình, then switch to Free Fire. The app and tweak are installed together; TrollStore is not required for this combined package.
+
+## HUD behavior
+
+The tweak is filtered to com.apple.springboard only. It receives show/hide commands from FF Tool through Darwin notifications. The draggable panel reports battery percentage/state, Apple's qualitative thermal-pressure state, an estimate of free RAM pages and device uptime.
+
+The tweak does not load into Free Fire, read or modify its memory, inspect match state, or bypass game protections. This is a device-status overlay only. Individual games may restrict third-party overlays.
+
+## Measurement limits
+
+- The temperature label is Apple's thermal-pressure state, not a physical temperature in °C.
+- The app's RAM number is memory used by the FF Tool process only.
+- The HUD's free-memory number is an estimate based on free VM pages.
+- iOS may throttle status refreshes under load or while the app is suspended.
 
 ## Build
 
-Run `scripts/build-tipa.sh` on a Mac with Xcode and XcodeGen installed, or use the GitHub Actions workflow at `.github/workflows/build-devicescope.yml`.
-
-The output is `out/DeviceScope.tipa`, containing `Payload/DeviceScope.app` and the embedded Live Activity extension. The main app targets iOS 15.0; the Live Activity extension in this build targets iOS 16.2 or later.
-
-
-## System-wide HUD
-
-Install `DeviceScopeHUD.deb` with Sileo/Zebra on a rootless Dopamine/ElleKit jailbreak, then respring SpringBoard. Open DeviceScope and tap **Bật** under **HUD nổi toàn hệ thống**. The floating panel can be dragged; tap it to expand or collapse.
-
-The tweak is filtered to `com.apple.springboard` only. It reads battery state, iOS thermal pressure, a free-page RAM estimate and device uptime. It does not load into Free Fire, inspect game memory, patch the game, or read match state. A third-party overlay can still be disallowed by a game's own rules; this package does not bypass such checks.
+Push changes on branch devicescope-build or manually run .github/workflows/build-devicescope.yml. Successful runs upload a single artifact named FFTool-Combined-DEB.
