@@ -1554,7 +1554,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
             @"matched": @(inFreeFire),
             @"source": gFFFrontmostSource ?: @"unknown"
         }];
-        FFAppendHUDLog(@"VISIBILITY", [NSString stringWithFormat:@"source=%@ | foreground_match=%@ | bundle_id=%@ | panel_hidden=%@",
+        FFAppendHUDLog(@"VISIBILITY", [NSString stringWithFormat:@"source=%@ | foreground_match=%@ | bundle_id=%@ | panel_hidden=%@ | ring_hidden=%@",
                                        gFFFrontmostSource ?: @"unknown",
                                        inFreeFire ? @"YES" : @"NO",
                                        bundleID,
