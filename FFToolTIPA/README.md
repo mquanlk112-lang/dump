@@ -7,7 +7,7 @@ This project builds one TrollStore-installable `FFTool.tipa` containing:
 
 ## Build and install
 
-Build with Theos on macOS using the repository workflow. Install the single `FFTool.tipa` from TrollStore. No separate .deb is produced as an install artifact.
+Build with Theos on macOS using `.github/workflows/build-devicescope.yml`. The workflow uploads only one artifact named `FFTool-TIPA`. Install the single `FFTool.tipa` from TrollStore. No separate .deb is produced or delivered as an install artifact.
 
 Open FF Tool, press **Bật HUD trên màn hình**, then switch to another app. The HUD can be dragged and tapped to expand/collapse. Press **Tắt HUD nổi** in FF Tool to stop it.
 
