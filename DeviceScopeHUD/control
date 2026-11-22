@@ -1,0 +1,9 @@
+Package: com.minhquandev.devicescopehud
+Name: DeviceScope HUD
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Draggable system-wide device status HUD for SpringBoard.
+Maintainer: DeviceScope
+Author: Minh Quan Dev
+Section: Tweaks
+Depends: firmware (>= 15.0), mobilesubstrate
