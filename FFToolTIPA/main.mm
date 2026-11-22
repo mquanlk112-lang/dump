@@ -30,8 +30,35 @@ extern "C" void UIApplicationInitialize(void);
 extern "C" void UIApplicationInstantiateSingleton(id applicationClass);
 
 static NSString * const kFFHUDPIDPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud.pid";
-static NSString * const kFFHUDDismissNotification = @"com.minhquandev.fftool.hud.dismiss";
+static NSString * const kFFHUDSettingsPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud-settings.plist";
 static const CGFloat kFFPurple = 0.68;
+
+static NSDictionary *FFDefaultHUDSettings(void) {
+    return @{
+        @"fovEnabled": @NO,
+        @"fovDiameter": @240,
+        @"fovColor": @0,
+        @"fovOpacity": @0.88
+    };
+}
+
+static NSDictionary *FFLoadHUDSettings(void) {
+    NSMutableDictionary *settings = [NSMutableDictionary dictionaryWithDictionary:FFDefaultHUDSettings()];
+    NSDictionary *saved = [NSDictionary dictionaryWithContentsOfFile:kFFHUDSettingsPath];
+    if ([saved isKindOfClass:NSDictionary.class]) [settings addEntriesFromDictionary:saved];
+    return settings;
+}
+
+static BOOL FFSaveHUDSettings(NSDictionary *settings) {
+    NSString *directory = [kFFHUDSettingsPath stringByDeletingLastPathComponent];
+    NSError *error = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory
+                              withIntermediateDirectories:YES
+                                               attributes:nil
+                                                    error:&error];
+    if (error) return NO;
+    return [settings writeToFile:kFFHUDSettingsPath atomically:YES];
+}
 
 static UIColor *FFColor(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
     return [UIColor colorWithRed:r green:g blue:b alpha:a];
@@ -226,6 +253,10 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 - (void)refreshMetrics;
 @end
 
+@interface FFHUDRingView : UIView
+- (void)applySettings:(NSDictionary *)settings;
+@end
+
 @interface FFHUDWindow : UIWindow
 @property(nonatomic, weak) UIView *interactivePanel;
 @end
@@ -251,6 +282,12 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @property(nonatomic, strong) UILabel *hudHintLabel;
 @property(nonatomic, strong) UIButton *hudActionButton;
 @property(nonatomic, strong) UISwitch *hudSwitch;
+@property(nonatomic, strong) UISwitch *fovSwitch;
+@property(nonatomic, strong) UISegmentedControl *fovSizeControl;
+@property(nonatomic, strong) UISegmentedControl *fovColorControl;
+@property(nonatomic, strong) UISlider *fovOpacitySlider;
+@property(nonatomic, strong) UILabel *fovHintLabel;
+@property(nonatomic, strong) UILabel *fovOpacityLabel;
 @property(nonatomic, strong) NSTimer *refreshTimer;
 @property(nonatomic, assign) NSInteger selectedTab;
 @end
@@ -364,6 +401,12 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     self.hudHintLabel = nil;
     self.hudActionButton = nil;
     self.hudSwitch = nil;
+    self.fovSwitch = nil;
+    self.fovSizeControl = nil;
+    self.fovColorControl = nil;
+    self.fovOpacitySlider = nil;
+    self.fovHintLabel = nil;
+    self.fovOpacityLabel = nil;
 
     [self.contentStack addArrangedSubview:[self headerView]];
 
@@ -371,12 +414,14 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
         case 1:
             [self.contentStack addArrangedSubview:[self sectionHeading:@"CHẾ ĐỘ KHI CHƠI" subtitle:@"Trạng thái thiết bị nổi trên màn hình"]];
             [self.contentStack addArrangedSubview:[self hudControlCard]];
-            [self.contentStack addArrangedSubview:[self informationCard:@"HUD độc lập" body:@"HUD được vẽ bởi một tiến trình hiển thị hệ thống riêng. Nó không nạp mã vào Free Fire, không đọc bộ nhớ game và không truy cập trạng thái trận đấu."]];
+            [self.contentStack addArrangedSubview:[self fovControlCard]];
+            [self.contentStack addArrangedSubview:[self informationCard:@"HUD độc lập" body:@"Vòng tròn FOV là lớp vẽ cố định để trang trí màn hình. Không có khóa mục tiêu, tracking, ESP hoặc đọc dữ liệu trận đấu."]];
             break;
         case 2: {
-            [self.contentStack addArrangedSubview:[self sectionHeading:@"CÔNG CỤ" subtitle:@"Điều khiển HUD và làm mới chỉ số"]];
+            [self.contentStack addArrangedSubview:[self sectionHeading:@"CÔNG CỤ" subtitle:@"Điều khiển HUD, vòng FOV và chỉ số"]];
             [self.contentStack addArrangedSubview:[self hudControlCard]];
-            [self.contentStack addArrangedSubview:[self informationCard:@"Dynamic Island" body:@"Live Activity là tuỳ chọn riêng; HUD nổi là thành phần chính hiển thị khi chuyển sang ứng dụng khác."]];
+            [self.contentStack addArrangedSubview:[self fovControlCard]];
+            [self.contentStack addArrangedSubview:[self informationCard:@"Dynamic Island" body:@"Live Activity là tuỳ chọn riêng; HUD nổi và vòng trang trí là lớp hiển thị độc lập."]];
             UIButton *refresh = [self actionButton:@"Làm mới chỉ số" symbol:@"arrow.clockwise" action:@selector(refreshNow)];
             [self.contentStack addArrangedSubview:refresh];
             break;
@@ -390,6 +435,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
         default:
             [self.contentStack addArrangedSubview:[self systemStatusCard]];
             [self.contentStack addArrangedSubview:[self hudControlCard]];
+            [self.contentStack addArrangedSubview:[self fovControlCard]];
             [self.contentStack addArrangedSubview:[self metricsCard]];
             [self.contentStack addArrangedSubview:[self informationCard:@"Trạng thái trực tiếp" body:@"FF Tool chỉ hiển thị thông số thiết bị. Không có ESP, không đọc hoặc sửa bộ nhớ Free Fire, không thay đổi dữ liệu trận đấu."]];
             break;
@@ -619,6 +665,139 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
         [action.heightAnchor constraintEqualToConstant:54]
     ]];
     return card;
+}
+
+- (UIView *)fovControlCard {
+    NSDictionary *settings = FFLoadHUDSettings();
+    UIView *card = [[UIView alloc] initWithFrame:CGRectZero];
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    FFStyleCard(card, 20);
+
+    UILabel *title = FFLabel(@"Vòng FOV trang trí", 15, UIFontWeightBold, UIColor.whiteColor);
+    UILabel *subtitle = FFLabel(@"Vòng tròn cố định ở giữa màn hình", 10, UIFontWeightMedium, FFColor(0.76, 0.70, 0.88, 1));
+
+    UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectZero];
+    toggle.translatesAutoresizingMaskIntoConstraints = NO;
+    toggle.onTintColor = FFAccent();
+    toggle.on = [settings[@"fovEnabled"] boolValue];
+    [toggle addTarget:self action:@selector(fovSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+    self.fovSwitch = toggle;
+
+    UIStackView *headingTexts = [[UIStackView alloc] initWithArrangedSubviews:@[title, subtitle]];
+    headingTexts.axis = UILayoutConstraintAxisVertical;
+    headingTexts.spacing = 4;
+
+    UIStackView *heading = [[UIStackView alloc] initWithArrangedSubviews:@[headingTexts, toggle]];
+    heading.axis = UILayoutConstraintAxisHorizontal;
+    heading.alignment = UIStackViewAlignmentCenter;
+    heading.spacing = 10;
+
+    UILabel *sizeTitle = FFLabel(@"Kích thước vòng", 10, UIFontWeightSemibold, FFColor(0.80, 0.75, 0.92, 1));
+    UISegmentedControl *size = [[UISegmentedControl alloc] initWithItems:@[@"Nhỏ", @"Vừa", @"Lớn"]];
+    size.translatesAutoresizingMaskIntoConstraints = NO;
+    size.selectedSegmentIndex = 1;
+    NSInteger diameter = [settings[@"fovDiameter"] integerValue];
+    if (diameter <= 190) size.selectedSegmentIndex = 0;
+    else if (diameter >= 290) size.selectedSegmentIndex = 2;
+    size.selectedSegmentTintColor = FFAccent();
+    [size setTitleTextAttributes:@{NSForegroundColorAttributeName: UIColor.whiteColor,
+                                   NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold]}
+                        forState:UIControlStateSelected];
+    [size addTarget:self action:@selector(fovSizeChanged:) forControlEvents:UIControlEventValueChanged];
+    self.fovSizeControl = size;
+
+    UILabel *colorTitle = FFLabel(@"Màu vòng", 10, UIFontWeightSemibold, FFColor(0.80, 0.75, 0.92, 1));
+    UISegmentedControl *color = [[UISegmentedControl alloc] initWithItems:@[@"Tím", @"Cyan", @"Xanh"]];
+    color.translatesAutoresizingMaskIntoConstraints = NO;
+    color.selectedSegmentIndex = MIN(2, MAX(0, [settings[@"fovColor"] integerValue]));
+    color.selectedSegmentTintColor = FFAccent();
+    [color setTitleTextAttributes:@{NSForegroundColorAttributeName: UIColor.whiteColor,
+                                    NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold]}
+                         forState:UIControlStateSelected];
+    [color addTarget:self action:@selector(fovColorChanged:) forControlEvents:UIControlEventValueChanged];
+    self.fovColorControl = color;
+
+    UILabel *opacityTitle = FFLabel(@"Độ mờ", 10, UIFontWeightSemibold, FFColor(0.80, 0.75, 0.92, 1));
+    UILabel *opacityValue = FFLabel([NSString stringWithFormat:@"%.0f%%", [settings[@"fovOpacity"] doubleValue] * 100.0], 10, UIFontWeightBold, FFAccent());
+    self.fovOpacityLabel = opacityValue;
+
+    UISlider *opacity = [[UISlider alloc] initWithFrame:CGRectZero];
+    opacity.translatesAutoresizingMaskIntoConstraints = NO;
+    opacity.minimumValue = 0.25;
+    opacity.maximumValue = 1.0;
+    opacity.value = MIN(1.0, MAX(0.25, [settings[@"fovOpacity"] floatValue]));
+    opacity.minimumTrackTintColor = FFAccent();
+    opacity.maximumTrackTintColor = FFColor(0.48, 0.40, 0.62, 0.50);
+    [opacity addTarget:self action:@selector(fovOpacityChanged:) forControlEvents:UIControlEventValueChanged];
+    self.fovOpacitySlider = opacity;
+
+    UIStackView *opacityHeading = [[UIStackView alloc] initWithArrangedSubviews:@[opacityTitle, [UIView new], opacityValue]];
+    opacityHeading.axis = UILayoutConstraintAxisHorizontal;
+
+    UILabel *hint = FFLabel(@"Chỉ là nét vẽ cố định, không tự bám theo người chơi và không tác động điều khiển ngắm.", 10, UIFontWeightMedium, FFColor(0.78, 0.71, 0.98, 1));
+    hint.numberOfLines = 0;
+    self.fovHintLabel = hint;
+
+    UIStackView *body = [[UIStackView alloc] initWithArrangedSubviews:@[
+        heading,
+        sizeTitle,
+        size,
+        colorTitle,
+        color,
+        opacityHeading,
+        opacity,
+        hint
+    ]];
+    body.translatesAutoresizingMaskIntoConstraints = NO;
+    body.axis = UILayoutConstraintAxisVertical;
+    body.spacing = 9;
+
+    [card addSubview:body];
+    [NSLayoutConstraint activateConstraints:@[
+        [body.topAnchor constraintEqualToAnchor:card.topAnchor constant:15],
+        [body.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:15],
+        [body.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-15],
+        [body.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-15],
+        [size.heightAnchor constraintEqualToConstant:32],
+        [color.heightAnchor constraintEqualToConstant:32],
+        [opacity.heightAnchor constraintEqualToConstant:26],
+        [toggle.widthAnchor constraintEqualToConstant:48]
+    ]];
+    return card;
+}
+
+- (void)saveFOVSettings {
+    NSMutableDictionary *settings = [NSMutableDictionary dictionaryWithDictionary:FFLoadHUDSettings()];
+    if (self.fovSwitch) settings[@"fovEnabled"] = @(self.fovSwitch.isOn);
+    if (self.fovSizeControl) {
+        NSArray *diameters = @[@180, @240, @320];
+        NSInteger index = MIN(2, MAX(0, self.fovSizeControl.selectedSegmentIndex));
+        settings[@"fovDiameter"] = diameters[index];
+    }
+    if (self.fovColorControl) settings[@"fovColor"] = @(MAX(0, self.fovColorControl.selectedSegmentIndex));
+    if (self.fovOpacitySlider) settings[@"fovOpacity"] = @(self.fovOpacitySlider.value);
+
+    BOOL saved = FFSaveHUDSettings(settings);
+    self.fovHintLabel.text = saved
+        ? (FFHUDIsRunning() ? @"Đã lưu. Vòng FOV sẽ cập nhật trên HUD." : @"Đã lưu cài đặt. Bật HUD nổi để hiển thị vòng FOV.")
+        : @"Không lưu được cài đặt vòng FOV. Kiểm tra quyền ghi của TrollStore.";
+}
+
+- (void)fovSwitchChanged:(UISwitch *)sender {
+    [self saveFOVSettings];
+}
+
+- (void)fovSizeChanged:(UISegmentedControl *)sender {
+    [self saveFOVSettings];
+}
+
+- (void)fovColorChanged:(UISegmentedControl *)sender {
+    [self saveFOVSettings];
+}
+
+- (void)fovOpacityChanged:(UISlider *)sender {
+    self.fovOpacityLabel.text = [NSString stringWithFormat:@"%.0f%%", sender.value * 100.0];
+    [self saveFOVSettings];
 }
 
 - (UIView *)metricsCard {
@@ -899,21 +1078,117 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 }
 @end
 
+@interface FFHUDRingView ()
+@property(nonatomic, strong) CAShapeLayer *glowLayer;
+@property(nonatomic, strong) CAShapeLayer *ringLayer;
+@property(nonatomic, assign) CGFloat diameter;
+@property(nonatomic, strong) UIColor *ringColor;
+@end
+
+@implementation FFHUDRingView
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.backgroundColor = UIColor.clearColor;
+        self.userInteractionEnabled = NO;
+        self.opaque = NO;
+
+        self.glowLayer = [CAShapeLayer layer];
+        self.glowLayer.fillColor = UIColor.clearColor.CGColor;
+        self.glowLayer.lineWidth = 8.0;
+        self.glowLayer.lineCap = kCALineCapRound;
+        self.glowLayer.shadowRadius = 10.0;
+        self.glowLayer.shadowOffset = CGSizeZero;
+        self.glowLayer.shadowOpacity = 0.45;
+        [self.layer addSublayer:self.glowLayer];
+
+        self.ringLayer = [CAShapeLayer layer];
+        self.ringLayer.fillColor = UIColor.clearColor.CGColor;
+        self.ringLayer.lineWidth = 2.1;
+        self.ringLayer.lineDashPattern = @[@10, @6];
+        self.ringLayer.lineCap = kCALineCapRound;
+        [self.layer addSublayer:self.ringLayer];
+
+        self.diameter = 240.0;
+        self.ringColor = FFAccent();
+    }
+    return self;
+}
+
+- (void)applySettings:(NSDictionary *)settings {
+    BOOL enabled = [settings[@"fovEnabled"] boolValue];
+    self.hidden = !enabled;
+
+    CGFloat requested = [settings[@"fovDiameter"] doubleValue];
+    if (requested < 140.0) requested = 240.0;
+    self.diameter = MIN(360.0, MAX(160.0, requested));
+
+    NSInteger colorIndex = [settings[@"fovColor"] integerValue];
+    UIColor *baseColor = FFAccent();
+    if (colorIndex == 1) baseColor = FFColor(0.12, 0.83, 1.0, 1.0);
+    else if (colorIndex == 2) baseColor = FFColor(0.08, 0.96, 0.48, 1.0);
+
+    CGFloat opacity = [settings[@"fovOpacity"] doubleValue];
+    opacity = MIN(1.0, MAX(0.25, opacity));
+    self.ringColor = [baseColor colorWithAlphaComponent:opacity];
+    self.ringLayer.strokeColor = self.ringColor.CGColor;
+    self.glowLayer.strokeColor = [baseColor colorWithAlphaComponent:opacity * 0.32].CGColor;
+    self.glowLayer.shadowColor = baseColor.CGColor;
+    self.glowLayer.shadowOpacity = (float)(opacity * 0.48);
+    [self setNeedsLayout];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat limit = MAX(120.0, MIN(self.bounds.size.width, self.bounds.size.height) - 28.0);
+    CGFloat diameter = MIN(self.diameter, limit);
+    CGPoint center = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
+    CGRect circle = CGRectMake(center.x - diameter / 2.0,
+                               center.y - diameter / 2.0,
+                               diameter,
+                               diameter);
+    CGPathRef path = [UIBezierPath bezierPathWithOvalInRect:circle].CGPath;
+    self.glowLayer.frame = self.bounds;
+    self.ringLayer.frame = self.bounds;
+    self.glowLayer.path = path;
+    self.ringLayer.path = path;
+}
+@end
+
 @interface FFHUDViewController : UIViewController
 @property(nonatomic, strong) FFHUDPanelView *panel;
+@property(nonatomic, strong) FFHUDRingView *ring;
 @property(nonatomic, strong) NSTimer *refreshTimer;
+- (void)refreshHUD;
 @end
 
 @implementation FFHUDViewController
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.clearColor;
+    self.view.opaque = NO;
     CGRect bounds = UIScreen.mainScreen.bounds;
+
+    self.ring = [[FFHUDRingView alloc] initWithFrame:bounds];
+    self.ring.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.ring applySettings:FFLoadHUDSettings()];
+    [self.view addSubview:self.ring];
+
     CGFloat width = 168;
     self.panel = [[FFHUDPanelView alloc] initWithFrame:CGRectMake(MAX(4, bounds.size.width - width - 8), 112, width, 38)];
     self.panel.expanded = NO;
     [self.view addSubview:self.panel];
-    self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:5.0 target:self.panel selector:@selector(refreshMetrics) userInfo:nil repeats:YES];
+
+    self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
+                                                         target:self
+                                                       selector:@selector(refreshHUD)
+                                                       userInfo:nil
+                                                        repeats:YES];
+}
+
+- (void)refreshHUD {
+    [self.panel refreshMetrics];
+    [self.ring applySettings:FFLoadHUDSettings()];
 }
 @end
 
