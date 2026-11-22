@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: fftool-tipa-${{ github.ref }}
+  group: fftool-tipa-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
