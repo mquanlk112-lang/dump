@@ -21,6 +21,8 @@ xcodebuild \
 APP_PATH="build/Build/Products/Release-iphoneos/DeviceScope.app"
 test -d "$APP_PATH"
 test -f "$APP_PATH/Info.plist"
+LIVE_ACTIVITIES=$(/usr/libexec/PlistBuddy -c 'Print :NSSupportsLiveActivities' "$APP_PATH/Info.plist")
+test "$LIVE_ACTIVITIES" = "true"
 EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")
 test -f "$APP_PATH/$EXECUTABLE"
 

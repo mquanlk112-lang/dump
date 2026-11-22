@@ -75,6 +75,8 @@ jobs:
           EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")
           BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")
           test "$BUNDLE_ID" = "com.minhquandev.devicescope"
+          LIVE_ACTIVITIES=$(/usr/libexec/PlistBuddy -c 'Print :NSSupportsLiveActivities' "$APP_PATH/Info.plist")
+          test "$LIVE_ACTIVITIES" = "true"
           test -f "$APP_PATH/$EXECUTABLE"
 
           EXTENSION_PATH="$APP_PATH/PlugIns/DeviceScopeLiveActivity.appex"

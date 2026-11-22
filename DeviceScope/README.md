@@ -26,4 +26,4 @@ It does not overclock the CPU, kill other apps, modify game memory, inject into 
 
 Run `scripts/build-tipa.sh` on a Mac with Xcode and XcodeGen installed, or use the GitHub Actions workflow at `.github/workflows/build-devicescope.yml`.
 
-The output is `out/DeviceScope.tipa`, containing `Payload/DeviceScope.app` and the embedded Live Activity extension. The main app targets iOS 15.0; the Live Activity extension requires iOS 16.1 or later.
+The output is `out/DeviceScope.tipa`, containing `Payload/DeviceScope.app` and the embedded Live Activity extension. The main app targets iOS 15.0; the Live Activity extension in this build targets iOS 16.2 or later.
