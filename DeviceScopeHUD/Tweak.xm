@@ -3,6 +3,7 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <mach/mach.h>
 #import <mach/mach_host.h>
+#import <math.h>
 
 static UIWindow *DSWindow = nil;
 static UIViewController *DSController = nil;
@@ -161,7 +162,8 @@ static NSString *DSUptimeText(void) {
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     UITouch *touch = touches.anyObject;
-    _touchStart = [touch locationInView:nil];
+    CGPoint local = [touch locationInView:self];
+    _touchStart = CGPointMake(DSWindow.frame.origin.x + local.x, DSWindow.frame.origin.y + local.y);
     _windowStartFrame = DSWindow.frame;
     _didDrag = NO;
     [super touchesBegan:touches withEvent:event];
@@ -169,7 +171,8 @@ static NSString *DSUptimeText(void) {
 
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     UITouch *touch = touches.anyObject;
-    CGPoint current = [touch locationInView:nil];
+    CGPoint local = [touch locationInView:self];
+    CGPoint current = CGPointMake(DSWindow.frame.origin.x + local.x, DSWindow.frame.origin.y + local.y);
     CGFloat dx = current.x - _touchStart.x;
     CGFloat dy = current.y - _touchStart.y;
     if (!_didDrag && (fabs(dx) > 6.0 || fabs(dy) > 6.0)) _didDrag = YES;
