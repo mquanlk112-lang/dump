@@ -1,0 +1,25 @@
+name: DeviceScope
+options:
+  bundleIdPrefix: com.minhquandev
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+targets:
+  DeviceScope:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    info:
+      path: Config/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.minhquandev.devicescope
+        PRODUCT_NAME: DeviceScope
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGNING_ALLOWED: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
