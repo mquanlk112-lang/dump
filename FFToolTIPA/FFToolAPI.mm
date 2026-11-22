@@ -3,6 +3,9 @@
 #import <mach/mach.h>
 #import <mach/mach_host.h>
 #import <sys/types.h>
+#import <sys/file.h>
+#import <sys/stat.h>
+#import <fcntl.h>
 #import <unistd.h>
 
 NSString * const FFToolAPIErrorDomain = @"com.minhquandev.fftool.api";
@@ -33,12 +36,14 @@ static BOOL FFToolAPIEnsureDirectory(NSString *filePath, NSError **error) {
 @property(nonatomic, copy) FFToolAPIModuleStartHandler startHandler;
 @property(nonatomic, copy, nullable) FFToolAPIModuleStopHandler stopHandler;
 @property(nonatomic, assign, getter=isRunning) BOOL running;
+@property(nonatomic, assign, getter=isStarting) BOOL starting;
 @end
 
 @implementation FFAPIModuleRecord
 @end
 
 @interface FFToolAPI ()
+- (instancetype)initPrivate;
 @property(nonatomic, assign, getter=isReady) BOOL ready;
 @property(nonatomic, copy) NSString *version;
 @property(nonatomic, strong) NSLock *stateLock;
@@ -166,7 +171,6 @@ static BOOL FFToolAPIEnsureDirectory(NSString *filePath, NSError **error) {
             NSError *directoryError = nil;
             if (!FFToolAPIEnsureDirectory(kFFToolAPILogPath, &directoryError)) {
                 NSLog(@"[FFToolAPI] log directory error: %@", directoryError);
-                [self.logLock unlock];
                 return;
             }
 
@@ -184,34 +188,59 @@ static BOOL FFToolAPIEnsureDirectory(NSString *filePath, NSError **error) {
                               category.length ? category : @"API",
                               message ?: @""];
             NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
-            NSDictionary *attributes =
-                [[NSFileManager defaultManager] attributesOfItemAtPath:kFFToolAPILogPath error:nil];
-            unsigned long long currentSize = [attributes fileSize];
+            int fd = open(kFFToolAPILogPath.fileSystemRepresentation, O_CREAT | O_RDWR | O_APPEND, 0644);
+            if (fd < 0) {
+                NSLog(@"[FFToolAPI] open log failed: errno=%d", errno);
+                return;
+            }
 
-            if (currentSize > kFFToolAPILogLimit) {
-                NSData *existing = [NSData dataWithContentsOfFile:kFFToolAPILogPath];
-                if (existing.length > 0) {
-                    NSUInteger keep = MIN((NSUInteger)kFFToolAPILogKeep, existing.length);
-                    NSData *tail = [existing subdataWithRange:NSMakeRange(existing.length - keep, keep)];
-                    [tail writeToFile:kFFToolAPILogPath atomically:YES];
+            if (flock(fd, LOCK_EX) != 0) {
+                NSLog(@"[FFToolAPI] lock log failed: errno=%d", errno);
+                close(fd);
+                return;
+            }
+
+            struct stat info;
+            if (fstat(fd, &info) == 0 && (unsigned long long)info.st_size > kFFToolAPILogLimit) {
+                off_t keep = (off_t)MIN((unsigned long long)kFFToolAPILogKeep, (unsigned long long)info.st_size);
+                off_t offset = info.st_size - keep;
+                NSMutableData *tail = [NSMutableData dataWithLength:(NSUInteger)keep];
+                ssize_t readCount = pread(fd, tail.mutableBytes, (size_t)keep, offset);
+                if (readCount >= 0) {
+                    tail.length = (NSUInteger)readCount;
+                    if (ftruncate(fd, 0) == 0) {
+                        (void)lseek(fd, 0, SEEK_SET);
+                        const uint8_t *bytes = (const uint8_t *)tail.bytes;
+                        size_t remaining = tail.length;
+                        while (remaining > 0) {
+                            ssize_t written = write(fd, bytes, remaining);
+                            if (written < 0 && errno == EINTR) continue;
+                            if (written <= 0) break;
+                            bytes += written;
+                            remaining -= (size_t)written;
+                        }
+                    }
                 }
             }
 
-            NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:kFFToolAPILogPath];
-            if (!handle) {
-                [[NSFileManager defaultManager] createFileAtPath:kFFToolAPILogPath
-                                                        contents:[NSData data]
-                                                      attributes:nil];
-                handle = [NSFileHandle fileHandleForWritingAtPath:kFFToolAPILogPath];
+            const uint8_t *bytes = (const uint8_t *)data.bytes;
+            size_t remaining = data.length;
+            while (remaining > 0) {
+                ssize_t written = write(fd, bytes, remaining);
+                if (written < 0 && errno == EINTR) continue;
+                if (written <= 0) break;
+                bytes += written;
+                remaining -= (size_t)written;
             }
-            [handle seekToEndOfFile];
-            [handle writeData:data];
-            [handle closeFile];
+            (void)fsync(fd);
+            (void)flock(fd, LOCK_UN);
+            close(fd);
             NSLog(@"[FFToolAPI] %@", [line stringByTrimmingCharactersInSet:NSCharacterSet.newlineCharacterSet]);
         } @catch (NSException *exception) {
             NSLog(@"[FFToolAPI] log write exception: %@", exception);
+        } @finally {
+            [self.logLock unlock];
         }
-        [self.logLock unlock];
     }
 }
 
@@ -319,6 +348,12 @@ static BOOL FFToolAPIEnsureDirectory(NSString *filePath, NSError **error) {
         [self.moduleLock unlock];
         return YES;
     }
+    if (record.isStarting) {
+        [self.moduleLock unlock];
+        if (error) *error = FFToolAPIMakeError(16, [NSString stringWithFormat:@"Module is already starting: %@", name]);
+        return NO;
+    }
+    record.starting = YES;
     FFToolAPIModuleStartHandler start = record.startHandler;
     [self.moduleLock unlock];
 
@@ -327,6 +362,7 @@ static BOOL FFToolAPIEnsureDirectory(NSString *filePath, NSError **error) {
 
     [self.moduleLock lock];
     record.running = started;
+    record.starting = NO;
     [self.moduleLock unlock];
 
     if (!started) {
@@ -373,7 +409,8 @@ static BOOL FFToolAPIEnsureDirectory(NSString *filePath, NSError **error) {
     [self.modules enumerateKeysAndObjectsUsingBlock:^(NSString *name, FFAPIModuleRecord *record, BOOL *stop) {
         status[name] = @{
             @"registered": @YES,
-            @"running": @(record.isRunning)
+            @"running": @(record.isRunning),
+            @"starting": @(record.isStarting)
         };
     }];
     [self.moduleLock unlock];
@@ -393,7 +430,6 @@ static BOOL FFToolAPIEnsureDirectory(NSString *filePath, NSError **error) {
     NSString *testPath = [NSTemporaryDirectory() stringByAppendingPathComponent:
                           [NSString stringWithFormat:@"fftool-api-selftest-%@.plist", NSUUID.UUID.UUIDString]];
     NSDictionary *testObject = @{ @"probe": @"fftool-api", @"value": @42 };
-    NSError *storageError = nil;
     BOOL storagePassed = [testObject writeToFile:testPath atomically:YES];
     NSDictionary *readBack = storagePassed ? [NSDictionary dictionaryWithContentsOfFile:testPath] : nil;
     storagePassed = storagePassed && [readBack[@"probe"] isEqual:@"fftool-api"] && [readBack[@"value"] isEqual:@42];
