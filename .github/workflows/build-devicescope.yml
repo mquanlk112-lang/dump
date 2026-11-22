@@ -7,6 +7,7 @@ on:
       - devicescope-build
     paths:
       - 'DeviceScope/**'
+      - 'DeviceScopeHUD/**'
       - '.github/workflows/build-devicescope.yml'
 
 permissions:
@@ -107,5 +108,52 @@ jobs:
         with:
           name: DeviceScope-TIPA
           path: DeviceScope.tipa
+          if-no-files-found: error
+          retention-days: 14
+
+  build-hud-deb:
+    name: Build rootless SpringBoard HUD package
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install packaging dependencies
+        run: brew install dpkg ldid xz
+
+      - name: Install Theos and link the runner iOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth=1 --recursive https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
+          mkdir -p "$RUNNER_TEMP/theos/sdks"
+          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          ln -s "$SDK_PATH" "$RUNNER_TEMP/theos/sdks/iPhoneOS${SDK_VERSION}.sdk"
+          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+          echo "Using iPhoneOS SDK $SDK_VERSION at $SDK_PATH"
+
+      - name: Build rootless package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd DeviceScopeHUD
+          make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
+          test -d packages
+          DEB="$(find packages -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$DEB"
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp "$DEB" "$GITHUB_WORKSPACE/out/DeviceScopeHUD.deb"
+          dpkg-deb --info "$GITHUB_WORKSPACE/out/DeviceScopeHUD.deb"
+          dpkg-deb --contents "$GITHUB_WORKSPACE/out/DeviceScopeHUD.deb"
+          shasum -a 256 "$GITHUB_WORKSPACE/out/DeviceScopeHUD.deb"
+
+      - name: Upload rootless HUD artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeviceScope-HUD-DEB
+          path: out/DeviceScopeHUD.deb
           if-no-files-found: error
           retention-days: 14
