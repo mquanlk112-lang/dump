@@ -46,6 +46,8 @@ static NSSet<NSString *> *FFGameBundleIDs(void) {
     return ids;
 }
 
+static void FFAppendHUDLog(NSString *category, NSString *message);
+
 static NSString *FFCurrentFrontmostBundleID(void) {
     CFStringRef identifier = SBSCopyFrontmostApplicationDisplayIdentifier();
     NSString *bundleID = identifier ? [((__bridge NSString *)identifier) copy] : @"<unavailable>";
@@ -302,7 +304,7 @@ static int FFSpawnRootCommand(const char *command, BOOL detach) {
     int result = posix_spawn(&child, path.UTF8String, NULL, &attributes, (char * const *)arguments, environ);
     posix_spawnattr_destroy(&attributes);
     if (result != 0) {
-        FFAppendHUDLog(@"SPAWN", [NSString stringWithFormat:@"posix_spawn failed | errno=%d | %@", result, strerror(result)]);
+        FFAppendHUDLog(@"SPAWN", [NSString stringWithFormat:@"posix_spawn failed | errno=%d | %s", result, strerror(result)]);
         return result;
     }
     FFAppendHUDLog(@"SPAWN", [NSString stringWithFormat:@"posix_spawn success | child_pid=%d", child]);
