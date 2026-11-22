@@ -790,10 +790,6 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 
 #pragma mark - System-wide HUD process
 
-@interface FFHUDWindow : UIWindow
-@property(nonatomic, weak) UIView *interactivePanel;
-@end
-
 @implementation FFHUDWindow
 + (BOOL)_isSystemWindow { return YES; }
 - (BOOL)_isWindowServerHostingManaged { return NO; }
