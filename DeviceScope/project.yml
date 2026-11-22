@@ -30,6 +30,7 @@ targets:
   DeviceScopeLiveActivity:
     type: app-extension
     platform: iOS
+    deploymentTarget: "16.2"
     sources:
       - path: WidgetExtension
       - path: Sources/DeviceScopeActivityAttributes.swift
@@ -38,7 +39,7 @@ targets:
     settings:
       base:
         SWIFT_VERSION: "5.0"
-        IPHONEOS_DEPLOYMENT_TARGET: "16.1"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.2"
         PRODUCT_BUNDLE_IDENTIFIER: com.minhquandev.devicescope.liveactivity
         PRODUCT_NAME: DeviceScopeLiveActivity
         TARGETED_DEVICE_FAMILY: "1"
