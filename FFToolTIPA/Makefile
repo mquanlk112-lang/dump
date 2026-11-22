@@ -5,6 +5,8 @@ FFTool_INSTALL_PATH := /Applications
 FFTool_FILES := main.mm
 FFTool_CFLAGS += -fobjc-arc -Wno-deprecated-declarations
 FFTool_FRAMEWORKS += Foundation UIKit QuartzCore CoreFoundation
+FFTool_PRIVATE_FRAMEWORKS += BackBoardServices GraphicsServices
+FFTool_LDFLAGS += -Flibraries
 FFTool_PRIVATE_FRAMEWORKS += BackBoardServices GraphicsServices SpringBoardServices
 FFTool_CODESIGN_FLAGS += -SEntitlements.plist
 
