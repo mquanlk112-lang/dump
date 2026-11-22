@@ -41,7 +41,7 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("DEVICESCOPE")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .tracking(2.4)
+                    .kerning(2.4)
                     .foregroundStyle(Color.cyan.opacity(0.9))
                 Text("Tổng quan thiết bị")
                     .font(.system(size: 27, weight: .bold, design: .rounded))
@@ -67,12 +67,12 @@ struct DashboardView: View {
             HStack {
                 Label("THIẾT BỊ", systemImage: "iphone.gen3")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .tracking(1.5)
+                    .kerning(1.5)
                     .foregroundStyle(.white.opacity(0.55))
                 Spacer()
                 Text("LIVE")
                     .font(.system(size: 9, weight: .heavy, design: .rounded))
-                    .tracking(1.2)
+                    .kerning(1.2)
                     .foregroundStyle(Color.green)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
@@ -127,7 +127,7 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("TÌNH TRẠNG NHIỆT")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .tracking(1.3)
+                    .kerning(1.3)
                     .foregroundStyle(.white.opacity(0.5))
                 Text(snapshot.thermalState.displayName)
                     .font(.system(size: 17, weight: .bold, design: .rounded))
@@ -147,7 +147,7 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("CHỈ SỐ ĐANG ĐỌC")
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .tracking(1.6)
+                .kerning(1.6)
                 .foregroundStyle(.white.opacity(0.48))
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                 MetricCard(
@@ -264,7 +264,7 @@ private struct MetricCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .tracking(1.1)
+                    .kerning(1.1)
                     .foregroundStyle(.white.opacity(0.47))
                 Text(value)
                     .font(.system(size: 20, weight: .bold, design: .rounded))
