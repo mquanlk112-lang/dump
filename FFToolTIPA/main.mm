@@ -53,6 +53,7 @@ static BOOL FFIsFreeFireForeground(void) {
 }
 
 static NSString * const kFFHUDPIDPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud.pid";
+static NSString * const kFFHUDStatusPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud-status.plist";
 static NSString * const kFFHUDSettingsPath = @"/var/mobile/Library/Caches/com.minhquandev.fftool.hud-settings.plist";
 static const CGFloat kFFPurple = 0.68;
 
@@ -81,6 +82,20 @@ static BOOL FFSaveHUDSettings(NSDictionary *settings) {
                                                     error:&error];
     if (error) return NO;
     return [settings writeToFile:kFFHUDSettingsPath atomically:YES];
+}
+
+static void FFWriteHUDStatus(NSString *stage, NSString *detail) {
+    NSDictionary *status = @{
+        @"stage": stage ?: @"unknown",
+        @"detail": detail ?: @"",
+        @"updated": @([[NSDate date] timeIntervalSince1970])
+    };
+    [status writeToFile:kFFHUDStatusPath atomically:YES];
+}
+
+static NSDictionary *FFReadHUDStatus(void) {
+    NSDictionary *status = [NSDictionary dictionaryWithContentsOfFile:kFFHUDStatusPath];
+    return [status isKindOfClass:NSDictionary.class] ? status : @{};
 }
 
 static UIColor *FFColor(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
@@ -232,10 +247,18 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
             if (message) *message = [NSString stringWithFormat:@"Không khởi chạy được HUD (lỗi %d). Kiểm tra TrollStore và trạng thái jailbreak.", result];
             return NO;
         }
-        [NSThread sleepForTimeInterval:0.45];
+        [NSThread sleepForTimeInterval:0.80];
         BOOL running = FFHUDIsRunning();
-        if (message) *message = running ? @"Đã bật HUD nổi. Chuyển sang Free Fire để xem trạng thái máy." : @"Lệnh đã gửi nhưng HUD chưa khởi động. Kiểm tra TrollStore/jailbreak.";
-        return running;
+        NSDictionary *status = FFReadHUDStatus();
+        NSString *stage = status[@"stage"] ?: @"no_status";
+        NSString *detail = status[@"detail"] ?: @"HUD process has not reported its window state";
+        BOOL hosted = [stage isEqualToString:@"window_hosted"] || [stage isEqualToString:@"plugin_running"];
+        if (message) {
+            if (!running) *message = @"HUD process đã thoát ngay sau khi khởi chạy. Kiểm tra TrollStore và log hệ thống.";
+            else if (!hosted) *message = [NSString stringWithFormat:@"HUD process còn chạy nhưng cửa sổ chưa đăng ký (%@): %@", stage, detail];
+            else *message = @"Cửa sổ HUD đã được đăng ký. Chuyển sang Free Fire; ngoài Free Fire HUD sẽ tự ẩn.";
+        }
+        return running && hosted;
     }
 
     if (!FFHUDIsRunning()) {
@@ -258,6 +281,10 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 - (void)_accessibilityInit;
 - (void)__completeAndRunAsPlugin;
 - (void)terminateWithSuccess;
+@end
+
+@interface UIWindow (FFToolPrivate)
+- (unsigned int)_contextId;
 @end
 
 @interface FFHUDAppDelegate : UIResponder <UIApplicationDelegate>
@@ -999,6 +1026,8 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @implementation FFHUDWindow
 + (BOOL)_isSystemWindow { return YES; }
 - (BOOL)_isWindowServerHostingManaged { return NO; }
+- (BOOL)_isSecure { return YES; }
+- (BOOL)_shouldCreateContextAsSecure { return YES; }
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
     if (!self.interactivePanel) return NO;
     return CGRectContainsPoint(self.interactivePanel.frame, point);
@@ -1221,8 +1250,13 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 }
 @end
 
-@implementation FFHUDAppDelegate
+@implementation FFHUDAppDelegate {
+    id _windowHostingController;
+}
+
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
+    FFWriteHUDStatus(@"delegate_started", @"HUD app delegate started");
+
     self.window = [[FFHUDWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     FFHUDViewController *controller = [[FFHUDViewController alloc] init];
     (void)controller.view;
@@ -1233,22 +1267,45 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     ((FFHUDWindow *)self.window).interactivePanel = controller.panel;
     [self.window setHidden:NO];
     [self.window makeKeyAndVisible];
+    FFWriteHUDStatus(@"window_created", @"HUD UIWindow created and made visible");
 
     Class hostClass = NSClassFromString(@"SBSAccessibilityWindowHostingController");
-    if (hostClass) {
-        id host = [[hostClass alloc] init];
-        unsigned int contextID = 0;
-        SEL contextSelector = NSSelectorFromString(@"_contextId");
-        if ([self.window respondsToSelector:contextSelector]) {
-            unsigned int (*contextIMP)(id, SEL) = (unsigned int (*)(id, SEL))[self.window methodForSelector:contextSelector];
-            contextID = contextIMP(self.window, contextSelector);
-        }
-        SEL registerSelector = NSSelectorFromString(@"registerWindowWithContextID:atLevel:");
-        if (contextID && [host respondsToSelector:registerSelector]) {
-            void (*registerIMP)(id, SEL, unsigned int, double) = (void (*)(id, SEL, unsigned int, double))[host methodForSelector:registerSelector];
-            registerIMP(host, registerSelector, contextID, self.window.windowLevel);
-        }
+    if (!hostClass) {
+        FFWriteHUDStatus(@"host_class_missing", @"SBSAccessibilityWindowHostingController was not found");
+        return YES;
     }
+
+    // Retain the host controller for the full lifetime of the HUD delegate.
+    // TrollSpeed uses the same lifetime model through its _windowHostingController ivar.
+    _windowHostingController = [[hostClass alloc] init];
+
+    SEL registerSelector = NSSelectorFromString(@"registerWindowWithContextID:atLevel:");
+    if (![_windowHostingController respondsToSelector:registerSelector]) {
+        FFWriteHUDStatus(@"register_selector_missing", @"Window host registration selector is unavailable");
+        return YES;
+    }
+
+    unsigned int contextID = [self.window _contextId];
+    double windowLevel = self.window.windowLevel;
+    if (contextID == 0) {
+        FFWriteHUDStatus(@"window_context_missing", @"UIWindow returned an empty context ID");
+        return YES;
+    }
+
+    NSMethodSignature *signature = [NSMethodSignature signatureWithObjCTypes:"v@:Id"];
+    if (!signature) {
+        FFWriteHUDStatus(@"registration_signature_missing", @"Could not create window host method signature");
+        return YES;
+    }
+
+    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+    [invocation setTarget:_windowHostingController];
+    [invocation setSelector:registerSelector];
+    [invocation setArgument:&contextID atIndex:2];
+    [invocation setArgument:&windowLevel atIndex:3];
+    [invocation invoke];
+
+    FFWriteHUDStatus(@"window_hosted", @"HUD window registered with SBSAccessibilityWindowHostingController");
 
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -1266,16 +1323,29 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @end
 
 static int FFRunHUDProcess(void) {
+    FFWriteHUDStatus(@"initializing", @"Starting system HUD application");
+    [UIScreen initialize];
+    CFRunLoopGetCurrent();
+
     GSInitialize();
     BKSDisplayServicesStart();
     UIApplicationInitialize();
     UIApplicationInstantiateSingleton([FFHUDApplication class]);
 
     UIApplication *application = UIApplication.sharedApplication;
-    FFHUDAppDelegate *delegate = [[FFHUDAppDelegate alloc] init];
-    [application setDelegate:delegate];
+    static FFHUDAppDelegate *gFFHUDAppDelegate = nil;
+    gFFHUDAppDelegate = [[FFHUDAppDelegate alloc] init];
+    [application setDelegate:gFFHUDAppDelegate];
     [application _accessibilityInit];
+
+    [NSRunLoop currentRunLoop];
+    if (@available(iOS 15.0, *)) {
+        GSEventInitialize(0);
+        GSEventPushRunLoopMode(kCFRunLoopDefaultMode);
+    }
+
     [application __completeAndRunAsPlugin];
+    FFWriteHUDStatus(@"plugin_running", @"HUD plugin run loop started");
     CFRunLoopRun();
     return EXIT_SUCCESS;
 }
@@ -1286,6 +1356,7 @@ static int FFStartHUDMode(void) {
                                   withIntermediateDirectories:YES attributes:nil error:nil];
         NSString *pid = [NSString stringWithFormat:@"%d", getpid()];
         [pid writeToFile:kFFHUDPIDPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        FFWriteHUDStatus(@"process_started", @"HUD child process started");
         UIDevice.currentDevice.batteryMonitoringEnabled = YES;
         return FFRunHUDProcess();
     }
@@ -1312,6 +1383,6 @@ int main(int argc, char *argv[]) {
         if (argc > 1 && strcmp(argv[1], "-hud") == 0) return FFStartHUDMode();
         if (argc > 1 && strcmp(argv[1], "-exit") == 0) return FFStopHUDMode();
         if (argc > 1 && strcmp(argv[1], "-check") == 0) return FFCheckHUDMode();
-        return UIApplicationMain(argc, argv, nil, NSStringFromClass(FFToolAppDelegate.class));
+        return UIApplicationMain(argc, argv, NSStringFromClass(UIApplication.class), NSStringFromClass(FFToolAppDelegate.class));
     }
 }
