@@ -6,6 +6,8 @@
 #import <sys/file.h>
 #import <sys/stat.h>
 #import <fcntl.h>
+#import <errno.h>
+#import <stdint.h>
 #import <unistd.h>
 
 NSString * const FFToolAPIErrorDomain = @"com.minhquandev.fftool.api";
