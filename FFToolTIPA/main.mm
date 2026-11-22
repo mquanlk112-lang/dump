@@ -208,6 +208,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @interface UIApplication (FFToolPrivate)
 - (void)_accessibilityInit;
 - (void)__completeAndRunAsPlugin;
+- (void)terminateWithSuccess;
 @end
 
 @interface FFHUDAppDelegate : UIResponder <UIApplicationDelegate>
@@ -370,13 +371,14 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
             [self.contentStack addArrangedSubview:[self hudControlCard]];
             [self.contentStack addArrangedSubview:[self informationCard:@"HUD độc lập" body:@"HUD được vẽ bởi một tiến trình hiển thị hệ thống riêng. Nó không nạp mã vào Free Fire, không đọc bộ nhớ game và không truy cập trạng thái trận đấu."]];
             break;
-        case 2:
+        case 2: {
             [self.contentStack addArrangedSubview:[self sectionHeading:@"CÔNG CỤ" subtitle:@"Điều khiển HUD và làm mới chỉ số"]];
             [self.contentStack addArrangedSubview:[self hudControlCard]];
             [self.contentStack addArrangedSubview:[self informationCard:@"Dynamic Island" body:@"Live Activity là tuỳ chọn riêng; HUD nổi là thành phần chính hiển thị khi chuyển sang ứng dụng khác."]];
             UIButton *refresh = [self actionButton:@"Làm mới chỉ số" symbol:@"arrow.clockwise" action:@selector(refreshNow)];
             [self.contentStack addArrangedSubview:refresh];
             break;
+        }
         case 3:
             [self.contentStack addArrangedSubview:[self sectionHeading:@"THÔNG TIN" subtitle:@"FF Tool · Device Status Companion"]];
             [self.contentStack addArrangedSubview:[self informationCard:@"Thông tin thiết bị" body:[NSString stringWithFormat:@"Thiết bị: %@\niOS: %@\nPin: %@ · %@\nTrạng thái nhiệt: %@\nRAM trống ước lượng: %lu MB\nThời gian hoạt động: %@",
@@ -922,7 +924,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     self.window.backgroundColor = UIColor.clearColor;
     self.window.opaque = NO;
     self.window.windowLevel = 10000010.0;
-    self.window.interactivePanel = controller.panel;
+    ((FFHUDWindow *)self.window).interactivePanel = controller.panel;
     [self.window setHidden:NO];
     [self.window makeKeyAndVisible];
 
