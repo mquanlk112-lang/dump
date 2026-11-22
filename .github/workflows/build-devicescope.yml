@@ -1,4 +1,4 @@
-name: Build DeviceScope TIPA
+name: Build FF Tool Combined Rootless DEB
 
 on:
   workflow_dispatch:
@@ -14,42 +14,41 @@ permissions:
   contents: read
 
 concurrency:
-  group: devicescope-tipa-${{ github.ref }}
+  group: fftool-combined-deb-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build unsigned iOS app and TIPA
+  build-combined-deb:
+    name: Build one app plus SpringBoard HUD package
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode and report SDK
+      - name: Install build dependencies
+        run: brew install xcodegen dpkg ldid xz
+
+      - name: Select Xcode and install Theos
         shell: bash
         run: |
           set -euo pipefail
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
+          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          git clone --depth=1 --recursive https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
+          mkdir -p "$RUNNER_TEMP/theos/sdks"
+          ln -s "$SDK_PATH" "$RUNNER_TEMP/theos/sdks/iPhoneOS${SDK_VERSION}.sdk"
+          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+          echo "iOS SDK $SDK_VERSION: $SDK_PATH"
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Generate Xcode project
+      - name: Generate app project
         working-directory: DeviceScope
         run: xcodegen generate --spec project.yml
 
-      - name: Validate generated project
-        run: |
-          set -euo pipefail
-          xcodebuild -list -project DeviceScope/DeviceScope.xcodeproj
-          plutil -lint DeviceScope/Config/Info.plist
-          plutil -lint DeviceScope/WidgetExtension/Info.plist
-
-      - name: Build for physical iOS devices
+      - name: Build FF Tool app for arm64
         shell: bash
         run: |
           set -euo pipefail
@@ -64,96 +63,95 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             clean build
-
-      - name: Package and verify TIPA
-        shell: bash
-        run: |
-          set -euo pipefail
           APP_PATH="$RUNNER_TEMP/DeviceScope-DerivedData/Build/Products/Release-iphoneos/DeviceScope.app"
           test -d "$APP_PATH"
           test -f "$APP_PATH/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")" = "com.minhquandev.devicescope"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PATH/Info.plist")" = "FF Tool"
+          test -d "$APP_PATH/PlugIns/DeviceScopeLiveActivity.appex"
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
 
-          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")
-          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")
-          test "$BUNDLE_ID" = "com.minhquandev.devicescope"
-          LIVE_ACTIVITIES=$(/usr/libexec/PlistBuddy -c 'Print :NSSupportsLiveActivities' "$APP_PATH/Info.plist")
-          test "$LIVE_ACTIVITIES" = "true"
-          test -f "$APP_PATH/$EXECUTABLE"
-
-          EXTENSION_PATH="$APP_PATH/PlugIns/DeviceScopeLiveActivity.appex"
-          test -d "$EXTENSION_PATH"
-          EXTENSION_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$EXTENSION_PATH/Info.plist")
-          test "$EXTENSION_ID" = "com.minhquandev.devicescope.liveactivity"
-          EXT_EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$EXTENSION_PATH/Info.plist")
-          test -f "$EXTENSION_PATH/$EXT_EXECUTABLE"
-
-          ARCHS="$(lipo -archs "$APP_PATH/$EXECUTABLE")"
-          echo "Executable architectures: $ARCHS"
-          echo "$ARCHS" | grep -q 'arm64'
-
-          PACKAGE_ROOT="$RUNNER_TEMP/DeviceScope-Package"
-          rm -rf "$PACKAGE_ROOT"
-          mkdir -p "$PACKAGE_ROOT/Payload"
-          ditto "$APP_PATH" "$PACKAGE_ROOT/Payload/DeviceScope.app"
-
-          cd "$PACKAGE_ROOT"
-          /usr/bin/zip -qry "$GITHUB_WORKSPACE/DeviceScope.tipa" Payload
-          unzip -t "$GITHUB_WORKSPACE/DeviceScope.tipa"
-          unzip -Z1 "$GITHUB_WORKSPACE/DeviceScope.tipa" | grep -q '^Payload/DeviceScope.app/Info.plist$'
-          test -s "$GITHUB_WORKSPACE/DeviceScope.tipa"
-          shasum -a 256 "$GITHUB_WORKSPACE/DeviceScope.tipa"
-
-      - name: Upload TIPA artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: DeviceScope-TIPA
-          path: DeviceScope.tipa
-          if-no-files-found: error
-          retention-days: 14
-
-  build-hud-deb:
-    name: Build rootless SpringBoard HUD package
-    runs-on: macos-15
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install packaging dependencies
-        run: brew install dpkg ldid xz
-
-      - name: Install Theos and link the runner iOS SDK
+      - name: Build rootless SpringBoard tweak
+        working-directory: DeviceScopeHUD
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth=1 --recursive https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
-          mkdir -p "$RUNNER_TEMP/theos/sdks"
-          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
-          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
-          ln -s "$SDK_PATH" "$RUNNER_TEMP/theos/sdks/iPhoneOS${SDK_VERSION}.sdk"
-          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
-          echo "Using iPhoneOS SDK $SDK_VERSION at $SDK_PATH"
-
-      - name: Build rootless package
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd DeviceScopeHUD
           make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
-          test -d packages
-          DEB="$(find packages -maxdepth 1 -type f -name '*.deb' -print -quit)"
-          test -n "$DEB"
-          mkdir -p "$GITHUB_WORKSPACE/out"
-          cp "$DEB" "$GITHUB_WORKSPACE/out/DeviceScopeHUD.deb"
-          dpkg-deb --info "$GITHUB_WORKSPACE/out/DeviceScopeHUD.deb"
-          dpkg-deb --contents "$GITHUB_WORKSPACE/out/DeviceScopeHUD.deb"
-          shasum -a 256 "$GITHUB_WORKSPACE/out/DeviceScopeHUD.deb"
+          TWEAK_DEB="$(find packages -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$TWEAK_DEB"
+          echo "TWEAK_DEB=$GITHUB_WORKSPACE/DeviceScopeHUD/$TWEAK_DEB" >> "$GITHUB_ENV"
 
-      - name: Upload rootless HUD artifact
+      - name: Combine app and tweak into one Debian package
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/FFTool-Combined-Root"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/DEBIAN" "$STAGE/Applications"
+          dpkg-deb -x "$TWEAK_DEB" "$STAGE"
+          ditto "$APP_PATH" "$STAGE/Applications/FF Tool.app"
+
+          # Sign app and embedded extension executables for jailbreak installation.
+          while IFS= read -r -d '' FILE; do
+            if file "$FILE" | grep -q 'Mach-O'; then
+              ldid -S "$FILE"
+            fi
+          done < <(find "$STAGE/Applications/FF Tool.app" -type f -print0)
+
+          cat > "$STAGE/DEBIAN/control" <<'EOF'
+          Package: com.minhquandev.fftool
+          Name: FF Tool + DeviceScope HUD
+          Version: 2.0.0
+          Architecture: iphoneos-arm64
+          Description: FF Tool device dashboard and SpringBoard status HUD. No game process injection.
+          Maintainer: Minh Quan Dev
+          Author: Minh Quan Dev
+          Section: Tweaks
+          Depends: firmware (>= 15.0), mobilesubstrate
+          EOF
+
+          cat > "$STAGE/DEBIAN/postinst" <<'EOF'
+          #!/bin/sh
+          set -e
+          if [ -x /usr/bin/uicache ]; then
+            /usr/bin/uicache -p "/Applications/FF Tool.app" >/dev/null 2>&1 || true
+          elif command -v uicache >/dev/null 2>&1; then
+            uicache -p "/Applications/FF Tool.app" >/dev/null 2>&1 || true
+          fi
+          exit 0
+          EOF
+
+          cat > "$STAGE/DEBIAN/prerm" <<'EOF'
+          #!/bin/sh
+          if command -v notifyutil >/dev/null 2>&1; then
+            notifyutil -p com.minhquandev.devicescope.hud.hide >/dev/null 2>&1 || true
+          fi
+          exit 0
+          EOF
+
+          cat > "$STAGE/DEBIAN/postrm" <<'EOF'
+          #!/bin/sh
+          if command -v uicache >/dev/null 2>&1; then
+            uicache -u com.minhquandev.devicescope >/dev/null 2>&1 || true
+          fi
+          exit 0
+          EOF
+          chmod 755 "$STAGE/DEBIAN/postinst" "$STAGE/DEBIAN/prerm" "$STAGE/DEBIAN/postrm"
+
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          dpkg-deb --root-owner-group --build "$STAGE" "$GITHUB_WORKSPACE/out/FFTool-Combined.deb"
+          dpkg-deb --info "$GITHUB_WORKSPACE/out/FFTool-Combined.deb"
+          dpkg-deb --contents "$GITHUB_WORKSPACE/out/FFTool-Combined.deb"
+          dpkg-deb -c "$GITHUB_WORKSPACE/out/FFTool-Combined.deb" | grep -q 'Applications/FF Tool.app/Info.plist'
+          dpkg-deb -c "$GITHUB_WORKSPACE/out/FFTool-Combined.deb" | grep -q 'var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceScopeHUD.dylib'
+          dpkg-deb -c "$GITHUB_WORKSPACE/out/FFTool-Combined.deb" | grep -q 'var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceScopeHUD.plist'
+          plutil -lint "$STAGE/var/jb/Library/MobileSubstrate/DynamicLibraries/DeviceScopeHUD.plist"
+          shasum -a 256 "$GITHUB_WORKSPACE/out/FFTool-Combined.deb"
+
+      - name: Upload single combined package
         uses: actions/upload-artifact@v4
         with:
-          name: DeviceScope-HUD-DEB
-          path: out/DeviceScopeHUD.deb
+          name: FFTool-Combined-DEB
+          path: out/FFTool-Combined.deb
           if-no-files-found: error
           retention-days: 14
