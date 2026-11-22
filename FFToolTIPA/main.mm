@@ -10,6 +10,10 @@
 #import <mach/mach.h>
 #import <mach/mach_host.h>
 #import <dlfcn.h>
+#import <mach-o/dyld.h>
+#import <errno.h>
+#import <stdlib.h>
+#import <string.h>
 #import <math.h>
 
 extern "C" char **environ;
@@ -199,6 +203,11 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 @end
 
 @interface FFHUDApplication : UIApplication
+@end
+
+@interface UIApplication (FFToolPrivate)
+- (void)_accessibilityInit;
+- (void)__completeAndRunAsPlugin;
 @end
 
 @interface FFHUDAppDelegate : UIResponder <UIApplicationDelegate>
@@ -859,9 +868,6 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
     self.titleLabel.hidden = NO;
     self.detailLabel.hidden = !self.expanded;
     self.footerLabel.hidden = !self.expanded;
-    if (!self.expanded) {
-        self.titleLabel.frame = CGRectMake(9, 0, self.bounds.size.width - 18, self.bounds.size.height);
-    }
 }
 
 - (void)toggleExpanded {
@@ -917,6 +923,7 @@ static BOOL FFHUDSetEnabled(BOOL enabled, NSString **message) {
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     self.window = [[FFHUDWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     FFHUDViewController *controller = [[FFHUDViewController alloc] init];
+    (void)controller.view;
     self.window.rootViewController = controller;
     self.window.backgroundColor = UIColor.clearColor;
     self.window.opaque = NO;
