@@ -439,7 +439,7 @@ static BOOL FFToolAPIEnsureDirectory(NSString *filePath, NSError **error) {
     checks[@"storage_roundtrip"] = @{
         @"passed": @(storagePassed),
         @"detail": storagePassed ? @"Temporary property-list write/read passed" :
-                   (storageError.localizedDescription ?: @"Temporary property-list roundtrip failed")
+                   @"Temporary property-list roundtrip failed"
     };
 
     __block BOOL eventDelivered = NO;
